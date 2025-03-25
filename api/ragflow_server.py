@@ -31,12 +31,15 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import uuid
 
-from werkzeug.serving import run_simple
+from mangum import Mangum
 from api import settings
 from api.apps import app
 from api.db.runtime_config import RuntimeConfig
 from api.db.services.document_service import DocumentService
 from api import utils
+from aws_lambda_powertools import Logger
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from api.db.db_models import init_database_tables as init_web_db
 from api.db.init_data import init_web_data
@@ -66,21 +69,14 @@ def signal_handler(sig, frame):
     time.sleep(1)
     sys.exit(0)
 
-if __name__ == '__main__':
-    logging.info(r"""
-        ____   ___    ______ ______ __               
-       / __ \ /   |  / ____// ____// /____  _      __
-      / /_/ // /| | / / __ / /_   / // __ \| | /| / /
-     / _, _// ___ |/ /_/ // __/  / // /_/ /| |/ |/ / 
-    /_/ |_|/_/  |_|\____//_/    /_/ \____/ |__/|__/                             
+# Initialize Lambda handler
+handler = Mangum(app)
+logger = Logger()
 
-    """)
-    logging.info(
-        f'RAGFlow version: {get_ragflow_version()}'
-    )
-    logging.info(
-        f'project base: {utils.file_utils.get_project_base_directory()}'
-    )
+def init_app():
+    """Initialize the application"""
+    logging.info(f'RAGFlow version: {get_ragflow_version()}')
+    logging.info(f'project base: {utils.file_utils.get_project_base_directory()}')
     show_configs()
     settings.init_settings()
     print_rag_settings()
@@ -88,47 +84,33 @@ if __name__ == '__main__':
     # init db
     init_web_db()
     init_web_data()
-    # init runtime config
-    import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--version", default=False, help="RAGFlow version", action="store_true"
-    )
-    parser.add_argument(
-        "--debug", default=False, help="debug mode", action="store_true"
-    )
-    args = parser.parse_args()
-    if args.version:
-        print(get_ragflow_version())
-        sys.exit(0)
-
-    RuntimeConfig.DEBUG = args.debug
-    if RuntimeConfig.DEBUG:
-        logging.info("run on debug mode")
-
+    RuntimeConfig.DEBUG = False
     RuntimeConfig.init_env()
-    RuntimeConfig.init_config(JOB_SERVER_HOST=settings.HOST_IP, HTTP_PORT=settings.HOST_PORT)
+    RuntimeConfig.init_config(
+        JOB_SERVER_HOST=settings.HOST_IP,
+        HTTP_PORT=settings.HOST_PORT
+    )
 
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
+    # Start progress update in a background thread
     thread = ThreadPoolExecutor(max_workers=1)
     thread.submit(update_progress)
 
-    # start http server
+@logger.inject_lambda_context
+def lambda_handler(event: dict, context: LambdaContext) -> dict:
+    """AWS Lambda handler"""
     try:
-        logging.info("RAGFlow HTTP server start...")
-        run_simple(
-            hostname=settings.HOST_IP,
-            port=settings.HOST_PORT,
-            application=app,
-            threaded=True,
-            use_reloader=RuntimeConfig.DEBUG,
-            use_debugger=RuntimeConfig.DEBUG,
-        )
-    except Exception:
-        traceback.print_exc()
-        stop_event.set()
-        time.sleep(1)
-        os.kill(os.getpid(), signal.SIGKILL)
+        # Initialize app on cold start
+        init_app()
+        return handler(event, context)
+    except Exception as e:
+        logger.exception("Error handling request")
+        return {
+            "statusCode": 500,
+            "body": str(e)
+        }
+
+if __name__ == '__main__':
+    # For local development
+    init_app()
+    app.run(host=settings.HOST_IP, port=settings.HOST_PORT, debug=True)

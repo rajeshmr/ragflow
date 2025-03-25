@@ -1,0 +1,17 @@
+web/
+docs/
+helm/
+intergrations/
+mock/
+*.md
+.git/
+.github/
+.gitignore
+*.pyc
+__pycache__/
+.pytest_cache/
+flask_session/
+logs/
+tests/
+*.log
+.DS_Store

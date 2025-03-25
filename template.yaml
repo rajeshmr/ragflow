@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: SAM template for RAGFlow API
+
+Globals:
+  Function:
+    Timeout: 29
+    MemorySize: 1024
+    Environment:
+      Variables:
+        PYTHONPATH: /var/task
+
+Resources:
+  RagFlowFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: api.ragflow_server.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Events:
+        RagFlowAPI:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+      Environment:
+        Variables:
+          STAGE: prod
+      Policies:
+        - AWSLambdaBasicExecutionRole
