@@ -12,3 +12,4 @@ redis==5.0.1
 python-dotenv==1.0.1
 flask-cors==5.0.0
 beartype>=0.18.5,<0.19.0
+pycryptodomex==3.20.0

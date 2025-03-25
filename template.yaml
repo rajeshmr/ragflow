@@ -7,27 +7,27 @@ Globals:
   Function:
     Timeout: 29
     MemorySize: 1024
-    Environment:
-      Variables:
-        PYTHONPATH: /var/task
 
 Resources:
   RagFlowFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ./
-      Handler: api.ragflow_server.lambda_handler
-      Runtime: python3.10
+      PackageType: Image
       Architectures:
         - x86_64
+      Environment:
+        Variables:
+          PYTHONPATH: /var/task
+          STAGE: prod
       Events:
         RagFlowAPI:
           Type: Api
           Properties:
             Path: /{proxy+}
             Method: ANY
-      Environment:
-        Variables:
-          STAGE: prod
       Policies:
         - AWSLambdaBasicExecutionRole
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./
+      DockerTag: lambda

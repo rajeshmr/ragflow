@@ -92,9 +92,9 @@ def init_app():
         HTTP_PORT=settings.HOST_PORT
     )
 
-    # Start progress update in a background thread
-    thread = ThreadPoolExecutor(max_workers=1)
-    thread.submit(update_progress)
+    # # Start progress update in a background thread
+    # thread = ThreadPoolExecutor(max_workers=1)
+    # thread.submit(update_progress)
 
 @logger.inject_lambda_context
 def lambda_handler(event: dict, context: LambdaContext) -> dict:

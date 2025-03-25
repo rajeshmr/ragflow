@@ -44,3 +44,4 @@ nltk_data/
 .lh/
 .aws-sam/
 .aws-sam/build
+lambda.log
