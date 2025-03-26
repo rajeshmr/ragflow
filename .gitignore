@@ -45,3 +45,4 @@ nltk_data/
 .aws-sam/
 .aws-sam/build
 lambda.log
+.aws-sam/build.toml
