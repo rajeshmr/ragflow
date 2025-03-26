@@ -1,26 +1,38 @@
 FROM public.ecr.aws/lambda/python:3.10
 
-# Set the working directory
+USER root
 WORKDIR /var/task
 
-# Copy all application code first
-COPY . .
-
-# Create a Python virtual environment in /var/task/.venv
-RUN python -m venv .venv
-
-# Set up environment variables to use the virtual environment
+# Set environment variables for the virtual environment and Python path
 ENV VIRTUAL_ENV=/var/task/.venv
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-# Install uv package manager
-RUN pip install uv
-
-# Install Python dependencies using uv
-RUN uv pip install .
-
-# Set PYTHONPATH for the application
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV PYTHONPATH=/var/task
 
+# Install build dependencies for C extensions, LLVM, and ICU
+RUN yum update -y && \
+    yum groupinstall -y "Development Tools" && \
+    yum install -y gcc-c++ python3-devel llvm-devel libicu-devel && \
+    yum clean all
+
+# Copy dependency descriptor files
+COPY pyproject.toml requirements.api.txt ./
+
+# Create a virtual environment, upgrade pip, and install dependencies manually
+RUN python -m venv ${VIRTUAL_ENV} && \
+    pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements.api.txt --no-deps && \
+    pip install numpy pandas transformers nltk requests
+
+# Copy application code and configuration files
+
+COPY api api
+COPY conf conf
+COPY deepdoc deepdoc
+COPY rag rag
+COPY agent agent
+COPY graphrag graphrag
+COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
+COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
+
 # Define the Lambda entrypoint
-CMD ["api.ragflow_server.lambda_handler"]
+CMD ["api.ragflow_server"]

@@ -51,3 +51,4 @@ ENV/
 # Cache
 .cache/
 web/
+rag/res/deepdoc
