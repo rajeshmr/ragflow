@@ -5,7 +5,8 @@ RUN mkdir -p /tmp/build && chmod 777 /tmp/build
 
 # Set environment variables
 ENV TMPDIR=/tmp/build
-ENV PIP_NO_CACHE_DIR=1
+ENV VIRTUAL_ENV=/var/lang
+ENV PATH="/var/lang/bin:$PATH"
 
 # Install system dependencies
 RUN yum update -y && \
@@ -28,14 +29,18 @@ RUN yum update -y && \
     bzip2-devel \
     libxml2-devel \
     libxslt-devel \
+    icu-devel \
     && yum clean all
+
+# Install uv
+RUN pip install uv
 
 # Set working directory
 WORKDIR ${LAMBDA_TASK_ROOT}
 
 # Copy requirements first for better caching
 COPY requirements.full.txt .
-RUN pip install --no-cache-dir -r requirements.full.txt
+RUN uv sync -r requirements.full.txt
 
 # Copy application code
 COPY api api/
