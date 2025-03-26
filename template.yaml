@@ -28,6 +28,6 @@ Resources:
       Policies:
         - AWSLambdaBasicExecutionRole
     Metadata:
-      Dockerfile: Dockerfile
+      Dockerfile: Dockerfile.lambda
       DockerContext: ./
-      DockerTag: lambda
+      DockerTag: python3.10-v1

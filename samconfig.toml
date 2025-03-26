@@ -1,9 +1,9 @@
 version = 0.1
 [default.deploy.parameters]
-stack_name = "sam-app"
+stack_name = "sam-ragflow"
 resolve_s3 = true
-s3_prefix = "sam-app"
+s3_prefix = "sam-ragflow"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
-image_repositories = []
+image_repositories = ["RagFlowFunction=216989134830.dkr.ecr.us-east-1.amazonaws.com/samragflow5d6d3556/ragflowfunction771d7027repo"]
