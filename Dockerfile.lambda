@@ -1,59 +1,29 @@
 FROM public.ecr.aws/lambda/python:3.10
 
-# Create larger tmp directory
-RUN mkdir -p /tmp/build && chmod 777 /tmp/build
+# Set the working directory
+WORKDIR /var/task
 
-# Set environment variables
-ENV TMPDIR=/tmp/build
-ENV VIRTUAL_ENV=/var/lang
-ENV PATH="/var/lang/bin:$PATH"
+# Copy dependency descriptor files
+COPY pyproject.toml uv.lock ./
 
-# Install system dependencies
-RUN yum update -y && \
-    yum groupinstall -y "Development Tools" && \
-    yum install -y \
-    python3-devel \
-    gcc \
-    gcc-c++ \
-    make \
-    git \
-    tar \
-    postgresql-devel \
-    libjpeg-devel \
-    zlib-devel \
-    poppler-utils \
-    cairo-devel \
-    pango-devel \
-    libffi-devel \
-    openssl-devel \
-    bzip2-devel \
-    libxml2-devel \
-    libxslt-devel \
-    icu-devel \
-    && yum clean all
+# Create a Python virtual environment in /var/task/.venv
+RUN python -m venv .venv
 
-# Install uv
+# Set up environment variables to use the virtual environment
+ENV VIRTUAL_ENV=/var/task/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install uv package manager
 RUN pip install uv
 
-# Set working directory
-WORKDIR ${LAMBDA_TASK_ROOT}
+# Install Python dependencies using uv
+RUN uv sync --python 3.10 --frozen
 
-# Copy requirements first for better caching
-COPY requirements.full.txt .
-RUN uv sync -r requirements.full.txt
+# Copy the rest of your application code
+COPY . .
 
-# Copy application code
-COPY api api/
-COPY conf conf/
-COPY rag rag/
-COPY deepdoc deepdoc/
-COPY agent agent/
-COPY graphrag graphrag/
-COPY pyproject.toml ./
-
-# Set environment variables
+# Set PYTHONPATH for the application
 ENV PYTHONPATH=/var/task
-ENV STAGE=prod
 
-# Set the handler
-CMD [ "api.ragflow_server.lambda_handler" ]
+# Define the Lambda entrypoint
+CMD ["api.ragflow_server.lambda_handler"]
