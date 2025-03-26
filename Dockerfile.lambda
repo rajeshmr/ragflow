@@ -3,8 +3,8 @@ FROM public.ecr.aws/lambda/python:3.10
 # Set the working directory
 WORKDIR /var/task
 
-# Copy dependency descriptor files
-COPY pyproject.toml uv.lock ./
+# Copy all application code first
+COPY . .
 
 # Create a Python virtual environment in /var/task/.venv
 RUN python -m venv .venv
@@ -17,10 +17,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN pip install uv
 
 # Install Python dependencies using uv
-RUN uv sync --python 3.10 --frozen
-
-# Copy the rest of your application code
-COPY . .
+RUN uv pip install .
 
 # Set PYTHONPATH for the application
 ENV PYTHONPATH=/var/task
