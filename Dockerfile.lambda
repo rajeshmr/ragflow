@@ -27,9 +27,14 @@ ENV UV_HTTP_TIMEOUT=60
 COPY pyproject.toml uv.lock ./
 
 # Create a virtual environment and install dependencies using uv
-RUN python -m venv ${VIRTUAL_ENV} && \
-    curl -sSfL https://astral.sh/uv/install.sh | sh && \
-    /root/.local/bin/uv sync --python 3.11 --frozen
+# Create a virtual environment
+RUN python -m venv ${VIRTUAL_ENV}
+
+# Install uv tool
+RUN curl -sSfL https://astral.sh/uv/install.sh | sh
+
+# Sync dependencies using uv
+RUN /root/.local/bin/uv sync --python 3.11 --frozen
 
 # Copy application code and configuration files
 COPY api api
@@ -38,6 +43,8 @@ COPY deepdoc deepdoc
 COPY rag rag
 COPY agent agent
 COPY graphrag graphrag
+COPY agentic_reasoning agentic_reasoning
+
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 
