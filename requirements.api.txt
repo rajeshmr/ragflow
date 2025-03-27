@@ -9,7 +9,7 @@ pymysql==1.1.1
 pyodbc==5.2.0
 pywencai==0.12.3
 rag==0.1.0
-Requests==2.32.3
+requests==2.32.3
 scholarly==1.7.11
 serpapi==0.1.5
 yfinance==0.2.55

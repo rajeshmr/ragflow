@@ -35,4 +35,4 @@ COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 
 # Define the Lambda entrypoint
-CMD ["api.ragflow_server"]
+CMD ["api.ragflow_server.lambda_handler"]
