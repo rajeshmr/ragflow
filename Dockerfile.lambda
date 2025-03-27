@@ -20,16 +20,16 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
 # Set Rust environment variables so Cargo is available
 ENV CARGO_HOME=/root/.cargo
 ENV PATH=/root/.cargo/bin:${PATH}
+ENV UV_HTTP_TIMEOUT=60
+
 
 # Copy dependency descriptor files
-COPY pyproject.toml requirements.api.txt ./
+COPY pyproject.toml uv.lock ./
 
-# Create a virtual environment, upgrade pip, downgrade pip, and install dependencies
+# Create a virtual environment and install dependencies using uv
 RUN python -m venv ${VIRTUAL_ENV} && \
-    pip install --upgrade pip setuptools wheel && \
-    pip install "pip<24.1" && \
-    pip install -r requirements.api.txt && \
-    pip install numpy pandas transformers nltk requests
+    curl -sSfL https://astral.sh/uv/install.sh | sh && \
+    /root/.local/bin/uv sync --python 3.11 --frozen
 
 # Copy application code and configuration files
 COPY api api
