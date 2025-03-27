@@ -11,7 +11,7 @@ ENV PYTHONPATH=/var/task
 # Install build dependencies for C extensions, LLVM, and ICU
 RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
-    yum install -y gcc-c++ python3-devel llvm-devel libicu-devel && \
+    yum install -y gcc-c++ python3-devel llvm-devel libicu-devel libffi-devel openssl-devel && \
     yum clean all
 
 # Copy dependency descriptor files
@@ -34,5 +34,18 @@ COPY graphrag graphrag
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 
-# Define the Lambda entrypoint
-CMD ["api.ragflow_server.lambda_handler"]
+# Set environment variables for networking
+ENV HOST_IP="0.0.0.0"
+ENV HOST_PORT=80
+
+# Expose port 80 for HTTP traffic
+EXPOSE 80
+
+# Make entrypoint script executable
+RUN chmod +x ./entrypoint.sh
+
+# Override the default Lambda entrypoint
+ENTRYPOINT []
+
+# Define the command to run the Flask application
+CMD ["python", "-m", "api.ragflow_server"]

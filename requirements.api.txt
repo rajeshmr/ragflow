@@ -89,4 +89,10 @@ websocket_client==1.6.4
 word2number==1.1
 yarl==1.18.3
 zhipuai==2.1.5.20250106
+aws-lambda-powertools
+langfuse
+mangum
+pycryptodomex==3.20.0
+pdfminer.six==20221105
+cryptography==44.0.2
 # primp>=0.14.0  # Removed due to Rust dependency conflicts
