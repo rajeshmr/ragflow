@@ -93,7 +93,7 @@ aws-lambda-powertools
 langfuse
 mangum
 pycryptodomex==3.20.0
-pdfminer.six==20221105
+pdfminer.six==20231228
 cryptography==44.0.2
 argon2-cffi==23.1.0
 argon2-cffi-bindings==21.2.0

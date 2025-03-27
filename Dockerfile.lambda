@@ -1,4 +1,4 @@
-FROM public.ecr.aws/lambda/python:3.10
+FROM public.ecr.aws/lambda/python:3.11
 
 USER root
 WORKDIR /var/task
@@ -8,23 +8,30 @@ ENV VIRTUAL_ENV=/var/task/.venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV PYTHONPATH=/var/task
 
-# Install build dependencies for C extensions, LLVM, and ICU
+# Install build dependencies for C extensions, LLVM, ICU, and curl
 RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
-    yum install -y gcc-c++ python3-devel llvm-devel libicu-devel libffi-devel openssl-devel && \
+    yum install -y gcc-c++ python3-devel llvm-devel libicu-devel libffi-devel openssl-devel curl && \
     yum clean all
+
+# Install Rust toolchain (rustup) for compiling Rust extensions
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+
+# Set Rust environment variables so Cargo is available
+ENV CARGO_HOME=/root/.cargo
+ENV PATH=/root/.cargo/bin:${PATH}
 
 # Copy dependency descriptor files
 COPY pyproject.toml requirements.api.txt ./
 
-# Create a virtual environment, upgrade pip, and install dependencies manually
+# Create a virtual environment, upgrade pip, downgrade pip, and install dependencies
 RUN python -m venv ${VIRTUAL_ENV} && \
     pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements.api.txt --no-deps && \
+    pip install "pip<24.1" && \
+    pip install -r requirements.api.txt && \
     pip install numpy pandas transformers nltk requests
 
 # Copy application code and configuration files
-
 COPY api api
 COPY conf conf
 COPY deepdoc deepdoc
