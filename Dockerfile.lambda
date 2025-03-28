@@ -63,7 +63,4 @@ EXPOSE 80
 RUN chmod +x ./entrypoint.sh
 
 # Override the default Lambda entrypoint
-ENTRYPOINT []
-
-# Define the command to run the Flask application
-CMD ["python", "-m", "api.ragflow_server"]
+CMD ["./entrypoint.sh"]
