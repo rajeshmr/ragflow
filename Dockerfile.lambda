@@ -13,7 +13,7 @@ RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
     yum install -y gcc-c++ python3-devel llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
-    mesa-libGL htop unixODBC unixODBC-devel vim htop && yum clean all
+    mesa-libGL htop unixODBC unixODBC-devel vim htop nginx && yum clean all
 
 # Install Rust toolchain (rustup) for compiling Rust extensions
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
