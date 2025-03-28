@@ -25,32 +25,30 @@
     border-radius: 16px;
     .inputWrapper {
       background-color: unset;
-      border-radius: 16px;
       border: none;
       padding-left: 0;
       padding-right: 0;
       max-height: 64px !important;
       overflow-y: auto !important;
       box-shadow: none;
-      textarea {
-        background-color: unset;
+      &::-webkit-scrollbar {
+        display: none;
+      }
+      &::placeholder {
+        color: #494949a3;
+        top: 50%;
+        transform: translateY(-50%);
+        position: relative;
+      }
+      &:focus {
+        &::placeholder {
+          opacity: 0;
+        }
+        box-shadow: none !important;
+      }
+      span.anticon {
         svg {
           display: none;
-        }
-        &::-webkit-scrollbar {
-          display: none;
-        }
-        &::placeholder {
-          color: #494949a3;
-          top: 50%;
-          transform: translateY(-50%);
-          position: relative;
-        }
-        &:focus {
-          &::placeholder {
-            opacity: 0;
-          }
-          box-shadow: none !important;
         }
       }
     }

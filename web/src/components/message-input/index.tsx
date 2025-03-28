@@ -22,7 +22,6 @@ import {
   Space,
   Spin,
   Typography,
-  Upload,
   UploadProps,
 } from 'antd';
 import get from 'lodash/get';
@@ -38,7 +37,6 @@ import FileIcon from '../file-icon';
 import styles from './index.less';
 
 import classNames from 'classnames';
-import { Paperclip } from 'lucide-react';
 import { ReactComponent as SendSvg } from '../../assets/svg/send.svg';
 import { ReactComponent as EmojiSvg } from '../../assets/svg/smiley.svg';
 import { ReactComponent as VoiceSvg } from '../../assets/svg/voice.svg';
@@ -248,7 +246,7 @@ const MessageInput = ({
             size="large"
             placeholder={t('sendPlaceholder')}
             value={value}
-            allowClear
+            // allowClear
             disabled={disabled}
             className={classNames({
               [styles.inputWrapper]: fileList.length === 0,
@@ -350,7 +348,7 @@ const MessageInput = ({
                 width: fileList.length > 0 ? '50%' : '100%',
               }}
             >
-              {showUploadIcon && (
+              {/* {showUploadIcon && (
                 <Upload
                   onPreview={handlePreview}
                   onChange={handleChange}
@@ -369,7 +367,7 @@ const MessageInput = ({
                     className={styles.enterBtn}
                   ></Button>
                 </Upload>
-              )}
+              )} */}
               <Button type="primary" className={styles.enterBtn}>
                 <EmojiSvg className={styles.blueIcon} />
               </Button>
