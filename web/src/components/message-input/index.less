@@ -123,6 +123,12 @@
         transition: none;
         color: @gray51;
         border-radius: 4px;
+        @media screen and (max-width: 575px) {
+          padding: 5px 10px;
+        }
+        @media screen and (max-width: 380px) {
+          font-size: 13px;
+        }
         &:hover {
           background-color: @darkBlue;
           color: @white;
