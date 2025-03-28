@@ -35,7 +35,9 @@ RUN curl -sSfL https://astral.sh/uv/install.sh | sh
 
 # Sync dependencies using uv
 RUN /root/.local/bin/uv sync --python 3.11 --frozen
-RUN pip install xgboost
+RUN pip install xgboost onnxruntime
+RUN python -m nltk.downloader wordnet punkt_tab
+
 
 # Copy application code and configuration files
 COPY api api
