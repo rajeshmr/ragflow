@@ -20,7 +20,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
 # Set Rust environment variables so Cargo is available
 ENV CARGO_HOME=/root/.cargo
 ENV PATH=/root/.cargo/bin:${PATH}
-ENV UV_HTTP_TIMEOUT=60
+ENV UV_HTTP_TIMEOUT=120
 
 
 # Copy dependency descriptor files
