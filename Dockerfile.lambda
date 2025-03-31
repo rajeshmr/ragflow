@@ -63,4 +63,4 @@ EXPOSE 80
 RUN chmod +x ./entrypoint.sh
 
 # Override the default Lambda entrypoint
-CMD ["./entrypoint.sh"]
+ENTRYPOINT ["./entrypoint.sh"]
