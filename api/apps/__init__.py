@@ -41,6 +41,11 @@ Request.json = property(lambda self: self.get_json(force=True, silent=True))
 
 app = Flask(__name__)
 
+@app.route('/healthz', methods=['GET'])
+def health():
+    return {'status': 'starting'}, 200
+
+
 # Add this at the beginning of your file to configure Swagger UI
 swagger_config = {
     "headers": [],
