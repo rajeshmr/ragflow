@@ -1,0 +1,67 @@
+# for serverless multistage
+FROM public.ecr.aws/lambda/python:3.11
+
+USER root
+WORKDIR /var/task
+
+# Set environment variables for the virtual environment and Python path
+ENV VIRTUAL_ENV=/var/task/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PYTHONPATH=/var/task
+
+# Install build dependencies for C extensions, LLVM, ICU, and curl
+RUN yum update -y && \
+    yum groupinstall -y "Development Tools" && \
+    yum install -y gcc-c++ python3-devel llvm-devel \
+    libicu-devel libffi-devel openssl-devel curl \
+    mesa-libGL htop unixODBC unixODBC-devel vim htop nginx && yum clean all
+
+# Install Rust toolchain (rustup) for compiling Rust extensions
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+
+# Set Rust environment variables so Cargo is available
+ENV CARGO_HOME=/root/.cargo
+ENV PATH=/root/.cargo/bin:${PATH}
+ENV UV_HTTP_TIMEOUT=120
+
+
+# Copy dependency descriptor files
+COPY pyproject.toml uv.lock ./
+
+# Create a virtual environment and install dependencies using uv
+# Create a virtual environment
+RUN python -m venv ${VIRTUAL_ENV}
+
+# Install uv tool
+RUN curl -sSfL https://astral.sh/uv/install.sh | sh
+
+# Sync dependencies using uv
+RUN /root/.local/bin/uv sync --python 3.11 --frozen
+RUN pip install xgboost onnxruntime
+RUN python -m nltk.downloader wordnet punkt_tab
+
+
+# Copy application code and configuration files
+COPY api api
+COPY conf conf
+COPY deepdoc deepdoc
+COPY rag rag
+COPY agent agent
+COPY graphrag graphrag
+COPY agentic_reasoning agentic_reasoning
+
+COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
+COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
+
+# Set environment variables for networking
+ENV HOST_IP="0.0.0.0"
+ENV HOST_PORT=80
+
+# Expose port 80 for HTTP traffic
+EXPOSE 80
+
+# Make entrypoint script executable
+RUN chmod +x ./entrypoint.sh
+
+# Override the default Lambda entrypoint
+ENTRYPOINT ["./entrypoint.sh"]
