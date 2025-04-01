@@ -43,6 +43,7 @@ app = Flask(__name__)
 
 @app.route('/healthz', methods=['GET'])
 def health():
+    logging.info(f"initializing health check")
     return {'status': 'starting'}, 200
 
 
