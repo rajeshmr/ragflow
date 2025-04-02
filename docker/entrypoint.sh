@@ -29,7 +29,7 @@ fi
 # done
 
 while [ 1 -eq 1 ];do
-    $PY api/ragflow_server.py
+    $PY api/ragflow_server_apprunner.py
 done
 
 wait;
