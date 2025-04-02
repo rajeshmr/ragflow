@@ -41,9 +41,9 @@ Request.json = property(lambda self: self.get_json(force=True, silent=True))
 
 app = Flask(__name__)
 
+logging.info(f"initializing health check")
 @app.route('/healthz', methods=['GET'])
-def health():
-    logging.info(f"initializing health check")
+def health():    
     return {'status': 'starting'}, 200
 
 

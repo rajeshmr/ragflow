@@ -21,6 +21,9 @@
 from api.utils.log_utils import initRootLogger
 initRootLogger("ragflow_server")
 
+from api.apps import app
+
+
 import logging
 import os
 import signal
@@ -33,7 +36,7 @@ import uuid
 
 from werkzeug.serving import run_simple
 from api import settings
-from api.apps import app
+
 from api.db.runtime_config import RuntimeConfig
 from api.db.services.document_service import DocumentService
 from api import utils
