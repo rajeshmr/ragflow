@@ -16,24 +16,13 @@
 import os
 import sys
 import logging
-from importlib.util import module_from_spec, spec_from_file_location
+
 from pathlib import Path
 from flask import Blueprint, Flask
 from werkzeug.wrappers.request import Request
 from flask_cors import CORS
 from flasgger import Swagger
 from itsdangerous.url_safe import URLSafeTimedSerializer as Serializer
-
-from api.db import StatusEnum
-from api.db.db_models import close_connection
-from api.db.services import UserService
-from api.utils import CustomJSONEncoder, commands
-
-from flask_session import Session
-from flask_login import LoginManager
-from api import settings
-from api.utils.api_utils import server_error_response
-from api.constants import API_VERSION
 
 __all__ = ["app"]
 
@@ -45,6 +34,20 @@ logging.info(f"initializing health check")
 @app.route('/healthz', methods=['GET'])
 def health():    
     return {'status': 'starting'}, 200
+
+
+from importlib.util import module_from_spec, spec_from_file_location
+from api.db import StatusEnum
+from api.db.db_models import close_connection
+from api.db.services import UserService
+from api.utils import CustomJSONEncoder, commands
+
+from flask_session import Session
+from flask_login import LoginManager
+from api import settings
+from api.utils.api_utils import server_error_response
+from api.constants import API_VERSION
+
 
 
 # Add this at the beginning of your file to configure Swagger UI
