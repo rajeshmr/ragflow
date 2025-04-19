@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # replace env variables in the service_conf.yaml file
-rm -rf /var/task/ragflow/conf/service_conf.yaml
+rm -rf /var/task/conf/service_conf.yaml
 while IFS= read -r line || [[ -n "$line" ]]; do
     # Use eval to interpret the variable with default values
-    eval "echo \"$line\"" >> /var/task/ragflow/conf/service_conf.yaml
-done < /var/task/ragflow/docker/service_conf.yaml.template
+    eval "echo \"$line\"" >> /var/task/conf/service_conf.yaml
+done < /var/task/conf/service_conf.yaml.template
 
 /usr/sbin/nginx
 
