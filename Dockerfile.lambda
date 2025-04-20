@@ -14,10 +14,11 @@ RUN yum update -y && \
     yum install -y gcc-c++ python3-devel llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
     mesa-libGL htop unixODBC unixODBC-devel vim htop && \
-    # Install nginx from Amazon Linux extras
-    amazon-linux-extras install nginx1 -y || true && \
-    # Ensure nginx gets installed if extras aren't available
-    yum install -y nginx || true && \
+    # Try multiple methods to install nginx
+    (amazon-linux-extras install nginx1 -y || \
+    yum install -y nginx || \
+    (yum install -y epel-release && yum install -y nginx) || \
+    (amazon-linux-extras enable epel && yum install -y epel-release && yum install -y nginx)) && \
     yum clean all
 
 # Install Rust toolchain (rustup) for compiling Rust extensions
