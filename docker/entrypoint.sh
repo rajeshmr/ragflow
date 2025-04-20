@@ -7,7 +7,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     eval "echo \"$line\"" >> /var/task/conf/service_conf.yaml
 done < /var/task/conf/service_conf.yaml.template
 
-/usr/sbin/nginx
+# Nginx was removed as it's not compatible with AWS Lambda environments
+# AWS Lambda uses API Gateway for HTTP request routing
 
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/
 
