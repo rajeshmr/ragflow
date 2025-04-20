@@ -127,7 +127,9 @@ class LazyLoadMiddleware:
     def __init__(self):
         self.main_app = None
         # Start a thread to initialize the main app
+        logging.info("Starting main app initialization thread...")
         threading.Thread(target=self._init_app, daemon=True).start()
+        logging.info("Main app initialization thread started")
     
     def _init_app(self):
         self.main_app = init_main_app()
