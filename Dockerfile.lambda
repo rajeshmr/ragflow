@@ -59,6 +59,13 @@ COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 ENV HOST_IP="0.0.0.0"
 ENV HOST_PORT=80
 
+# Set environment variables for enhanced logging
+ENV DEBUG=true
+ENV VERBOSE=true
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
+ENV LOG_LEVEL=DEBUG
+
 # Expose port 80 for HTTP traffic
 EXPOSE 80
 
