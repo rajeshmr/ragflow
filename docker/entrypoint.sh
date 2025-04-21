@@ -17,6 +17,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done < /var/task/conf/service_conf.yaml.template
 echo "$(date): Configuration complete."
 
+# Print the generated service configuration file
+echo "$(date): Generated service_conf.yaml contents:"
+echo "----------------------------------------"
+cat /var/task/conf/service_conf.yaml
+echo "----------------------------------------"
+
 # Nginx was removed as it's not compatible with AWS Lambda environments
 # AWS Lambda uses API Gateway for HTTP request routing
 echo "$(date): Setting up environment..."
