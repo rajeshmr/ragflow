@@ -1,10 +1,12 @@
 #!/bin/bash
 set -e
 
-# Enable verbose logging if DEBUG is set
-if [[ "$DEBUG" == "true" || "$VERBOSE" == "true" ]]; then
-    set -x  # Print each command before executing
-fi
+# Verbose command debugging is disabled
+# Keeping structured logging for better readability
+# Uncomment below to re-enable verbose command-by-command debugging
+# if [[ "$DEBUG" == "true" || "$VERBOSE" == "true" ]]; then
+#     set -x  # Print each command before executing
+# fi
 
 echo "$(date): Starting container initialization..."
 
