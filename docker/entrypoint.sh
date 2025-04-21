@@ -60,14 +60,30 @@ echo "$(date): Starting main application loop"
 echo "$(date): Python executable: $(which $PY)"
 echo "$(date): Application file: api/ragflow_server_apprunner.py"
 
-# Print system info
+# Print system info in a way compatible with AWS Lambda environment
 echo "$(date): System information:"
 echo "Memory:"
-free -h
+if command -v free &> /dev/null; then
+    free -h
+else
+    echo "Memory info not available (free command not found)"
+    cat /proc/meminfo 2>/dev/null || echo "Proc meminfo not available"
+fi
+
 echo "Disk:"
-df -h
+if command -v df &> /dev/null; then
+    df -h
+else
+    echo "Disk info not available (df command not found)"
+fi
+
 echo "CPU:"
-lscpu | head -15
+if command -v lscpu &> /dev/null; then
+    lscpu | head -15
+else
+    echo "CPU info from /proc/cpuinfo:"
+    cat /proc/cpuinfo 2>/dev/null || echo "Proc cpuinfo not available"
+fi
 
 # Main application loop with error logging
 while [ 1 -eq 1 ]; do
