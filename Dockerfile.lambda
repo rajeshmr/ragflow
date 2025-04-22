@@ -1,24 +1,19 @@
-FROM public.ecr.aws/lambda/python:3.11
+# Stage 1: Builder stage - for compiling and installing dependencies
+FROM public.ecr.aws/lambda/python:3.11 AS builder
 
 USER root
 WORKDIR /var/task
-
-# Set environment variables for the virtual environment and Python path
-ENV VIRTUAL_ENV=/var/task/.venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-ENV PYTHONPATH=/var/task
 
 # Install build dependencies for C extensions, LLVM, ICU, and curl
 RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
     yum install -y gcc-c++ python3-devel llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
-    mesa-libGL htop unixODBC unixODBC-devel vim htop && \
-    # Note: AWS Lambda doesn't typically need nginx (it uses API Gateway for request routing)
-    # Installing build essentials and necessary libraries only
-    yum clean all
+    mesa-libGL unixODBC unixODBC-devel && \
+    yum clean all && \
+    rm -rf /var/cache/yum
 
-# Install Rust toolchain (rustup) for compiling Rust extensions
+# Install Rust toolchain (rustup) for compiling Rust extensions (required for primp package v0.14.0+)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 
 # Set Rust environment variables so Cargo is available
@@ -26,24 +21,45 @@ ENV CARGO_HOME=/root/.cargo
 ENV PATH=/root/.cargo/bin:${PATH}
 ENV UV_HTTP_TIMEOUT=120
 
-
-# Copy dependency descriptor files
-COPY pyproject.toml uv.lock ./
-
-# Create a virtual environment and install dependencies using uv
-# Create a virtual environment
+# Set up virtual environment
+ENV VIRTUAL_ENV=/var/task/.venv
 RUN python -m venv ${VIRTUAL_ENV}
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PYTHONPATH=/var/task
 
 # Install uv tool
 RUN curl -sSfL https://astral.sh/uv/install.sh | sh
 
-# Sync dependencies using uv
-RUN /root/.local/bin/uv sync --python 3.11 --frozen
-RUN pip install xgboost onnxruntime
-RUN python -m nltk.downloader wordnet punkt_tab
+# Copy only dependency files first for better caching
+COPY pyproject.toml uv.lock ./
 
+# Install dependencies (combined into a single RUN command to reduce layers)
+RUN /root/.local/bin/uv sync --python 3.11 --frozen && \
+    pip install xgboost onnxruntime && \
+    python -m nltk.downloader wordnet punkt_tab && \
+    # Clean up unnecessary cache files to reduce size
+    find ${VIRTUAL_ENV} -name "*.pyc" -delete && \
+    find ${VIRTUAL_ENV} -name "__pycache__" -type d -exec rm -rf {} +; 2>/dev/null || true
 
-# Copy application code and configuration files
+# Stage 2: Final slim image - contains only runtime dependencies
+FROM public.ecr.aws/lambda/python:3.11
+
+USER root
+WORKDIR /var/task
+
+# Install only runtime dependencies (not build tools)
+RUN yum update -y && \
+    yum install -y libicu curl mesa-libGL unixODBC && \
+    yum clean all && \
+    rm -rf /var/cache/yum
+
+# Copy virtual environment from builder
+ENV VIRTUAL_ENV=/var/task/.venv
+COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PYTHONPATH=/var/task
+
+# Copy application code
 COPY api api
 COPY conf conf
 COPY deepdoc deepdoc
@@ -52,6 +68,7 @@ COPY agent agent
 COPY graphrag graphrag
 COPY agentic_reasoning agentic_reasoning
 
+# Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
 COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 
@@ -69,7 +86,7 @@ ENV LOG_LEVEL=DEBUG
 # Expose port 80 for HTTP traffic
 EXPOSE 80
 
-# Make entrypoint script executable
+# Make entrypoint script executable 
 RUN chmod +x ./entrypoint.sh
 
 # Override the default Lambda entrypoint
