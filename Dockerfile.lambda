@@ -33,13 +33,9 @@ RUN curl -sSfL https://astral.sh/uv/install.sh | sh
 # Copy only dependency files first for better caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies (combined into a single RUN command to reduce layers)
-RUN /root/.local/bin/uv sync --python 3.11 --frozen && \
-    pip install xgboost onnxruntime && \
-    python -m nltk.downloader wordnet punkt_tab && \
-    # Clean up unnecessary cache files to reduce size
-    find ${VIRTUAL_ENV} -name "*.pyc" -delete && \
-    find ${VIRTUAL_ENV} -name "__pycache__" -type d -exec rm -rf {} +; 2>/dev/null || true
+RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
+    pip install uv && \
+    uv sync --python 3.11 --frozen
 
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/python:3.11
