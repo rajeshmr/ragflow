@@ -4825,7 +4825,6 @@ dependencies = [
     { name = "strenum" },
     { name = "tabulate" },
     { name = "tavily-python" },
-    { name = "tencentcloud-sdk-python" },
     { name = "tika" },
     { name = "tiktoken" },
     { name = "trio" },
@@ -4956,7 +4955,6 @@ requires-dist = [
     { name = "strenum", specifier = "==0.4.15" },
     { name = "tabulate", specifier = "==0.9.0" },
     { name = "tavily-python", specifier = "==0.5.1" },
-    { name = "tencentcloud-sdk-python", specifier = "==3.0.1215" },
     { name = "tika", specifier = "==2.6.0" },
     { name = "tiktoken", specifier = "==0.7.0" },
     { name = "torch", marker = "extra == 'full'", specifier = ">=2.5.0,<3.0.0" },
@@ -5859,17 +5857,6 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/d2/3f/8ba87d9e287b9d385a02a7114ddcef61b26f86411e121c9003eb509a1773/tenacity-8.5.0-py3-none-any.whl", hash = "sha256:b594c2a5945830c267ce6b79a166228323ed52718f30302c1359836112346687" },
 ]
 
-[[package]]
-name = "tencentcloud-sdk-python"
-version = "3.0.1215"
-source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
-dependencies = [
-    { name = "requests" },
-]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/fd/4c/7a320c65d605e817bedd1205c77a612be7d4dde621182cc7c00e334207ce/tencentcloud-sdk-python-3.0.1215.tar.gz", hash = "sha256:24441e69d418301d50be0279cb148a747fc272b836e41d18e213750093f490c6" }
-wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/55/08/98090d1a139e8995053ed22e099b43aa4dea8cffe056f8f0bc5178aeecbd/tencentcloud_sdk_python-3.0.1215-py2.py3-none-any.whl", hash = "sha256:899ced749baf74846f1eabf452f74aa0e48d1965f0ca7828a8b73b446f76f5f2" },
-]
 
 [[package]]
 name = "threadpoolctl"
