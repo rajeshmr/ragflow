@@ -64,6 +64,80 @@ echo "$(date): Virtual env: $VIRTUAL_ENV"
 #   task_exe $i &
 # done
 
+# Connection health checks before starting the service
+echo "$(date): Performing connectivity checks for all components..."
+
+# Function to check connection with timeout
+check_connection() {
+    local component=$1
+    local check_cmd=$2
+    local timeout=5
+    
+    echo "$(date): Checking $component connectivity..."
+    timeout $timeout bash -c "$check_cmd" 2>/dev/null
+    local status=$?
+    
+    if [ $status -eq 0 ]; then
+        echo "$(date): ✅ $component connection successful"
+        return 0
+    elif [ $status -eq 124 ]; then
+        echo "$(date): ❌ ERROR: $component connection timed out after ${timeout}s"
+        return 1
+    else
+        echo "$(date): ❌ ERROR: Failed to connect to $component (exit code: $status)"
+        return 1
+    fi
+}
+
+# Extract connection details from service_conf.yaml
+MYSQL_HOST=$(grep -A 3 "mysql" /var/task/conf/service_conf.yaml | grep "host" | awk '{print $2}')
+MYSQL_PORT=$(grep -A 3 "mysql" /var/task/conf/service_conf.yaml | grep "port" | awk '{print $2}')
+MYSQL_USER=$(grep -A 3 "mysql" /var/task/conf/service_conf.yaml | grep "user" | awk '{print $2}')
+MYSQL_PASSWORD=$(grep -A 3 "mysql" /var/task/conf/service_conf.yaml | grep "password" | awk '{print $2}')
+
+REDIS_HOST=$(grep -A 3 "redis" /var/task/conf/service_conf.yaml | grep "host" | awk '{print $2}')
+REDIS_PORT=$(grep -A 3 "redis" /var/task/conf/service_conf.yaml | grep "port" | awk '{print $2}')
+
+MINIO_HOST=$(grep -A 3 "minio" /var/task/conf/service_conf.yaml | grep "endpoint" | awk '{print $2}' | sed 's|http://||g' | sed 's|https://||g' | cut -d':' -f1)
+MINIO_PORT=$(grep -A 3 "minio" /var/task/conf/service_conf.yaml | grep "endpoint" | awk '{print $2}' | sed 's|http://||g' | sed 's|https://||g' | grep -o ':[0-9]\+' | cut -d':' -f2)
+
+ES_HOST=$(grep -A 3 "elasticsearch" /var/task/conf/service_conf.yaml | grep "host" | awk '{print $2}')
+ES_PORT=$(grep -A 3 "elasticsearch" /var/task/conf/service_conf.yaml | grep "port" | awk '{print $2}')
+
+# Initialize failure flag
+connection_failure=0
+
+# Check MySQL connection
+if [ ! -z "$MYSQL_HOST" ] && [ ! -z "$MYSQL_PORT" ]; then
+    check_cmd="echo 'SELECT 1;' | mysql -h$MYSQL_HOST -P$MYSQL_PORT -u$MYSQL_USER -p$MYSQL_PASSWORD --connect-timeout=5 2>&1 | grep -q '1'"
+    check_connection "MySQL" "$check_cmd" || connection_failure=1
+fi
+
+# Check Redis connection
+if [ ! -z "$REDIS_HOST" ] && [ ! -z "$REDIS_PORT" ]; then
+    check_cmd="redis-cli -h $REDIS_HOST -p $REDIS_PORT ping | grep -q 'PONG'"
+    check_connection "Redis" "$check_cmd" || connection_failure=1
+fi
+
+# Check MinIO connection
+if [ ! -z "$MINIO_HOST" ] && [ ! -z "$MINIO_PORT" ]; then
+    check_cmd="nc -z -w3 $MINIO_HOST $MINIO_PORT"
+    check_connection "MinIO" "$check_cmd" || connection_failure=1
+fi
+
+# Check Elasticsearch connection
+if [ ! -z "$ES_HOST" ] && [ ! -z "$ES_PORT" ]; then
+    check_cmd="curl --silent --max-time 3 http://$ES_HOST:$ES_PORT/_cluster/health | grep -q 'status'"
+    check_connection "Elasticsearch" "$check_cmd" || connection_failure=1
+fi
+
+# Exit if any connection checks failed
+if [ $connection_failure -eq 1 ]; then
+    echo "$(date): ❌ ERROR: One or more component connectivity checks failed. Exiting with error code 1."
+    exit 1
+fi
+
+echo "$(date): ✅ All component connectivity checks passed successfully."
 echo "$(date): Starting main application loop"
 echo "$(date): Python executable: $(which $PY)"
 echo "$(date): Application file: api/ragflow_server_apprunner.py"
