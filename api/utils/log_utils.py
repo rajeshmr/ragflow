@@ -38,18 +38,15 @@ def initRootLogger(logfile_basename: str, log_format: str = "%(asctime)-15s %(le
 
     logger = logging.getLogger()
     logger.handlers.clear()
-    log_path = os.path.abspath(os.path.join(get_project_base_directory(), "logs", f"{logfile_basename}.log"))
-
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    
+    # Configure only StreamHandler for CloudWatch integration
+    # All logs will go to stdout which CloudWatch captures automatically
     formatter = logging.Formatter(log_format)
-
-    handler1 = RotatingFileHandler(log_path, maxBytes=10*1024*1024, backupCount=5)
-    handler1.setFormatter(formatter)
-    logger.addHandler(handler1)
-
-    handler2 = logging.StreamHandler()
-    handler2.setFormatter(formatter)
-    logger.addHandler(handler2)
+    
+    # Create a single StreamHandler for stdout
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
 
     logging.captureWarnings(True)
 
@@ -76,5 +73,5 @@ def initRootLogger(logfile_basename: str, log_format: str = "%(asctime)-15s %(le
         pkg_logger = logging.getLogger(pkg_name)
         pkg_logger.setLevel(pkg_level)
 
-    msg = f"{logfile_basename} log path: {log_path}, log levels: {pkg_levels}"
+    msg = f"{logfile_basename} log levels: {pkg_levels} (logging to stdout for CloudWatch)"
     logger.info(msg)
