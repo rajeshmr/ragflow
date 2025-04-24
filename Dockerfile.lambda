@@ -38,7 +38,6 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     uv sync --python 3.11 --frozen
 RUN pip install xgboost onnxruntime
 RUN python -m nltk.downloader wordnet punkt_tab
-
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/python:3.11
 
@@ -54,6 +53,10 @@ RUN yum update -y && \
 # Copy virtual environment from builder
 ENV VIRTUAL_ENV=/var/task/.venv
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+
+# Copy NLTK data from builder stage
+COPY --from=builder /root/nltk_data /root/nltk_data
+
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV PYTHONPATH=/var/task
 
