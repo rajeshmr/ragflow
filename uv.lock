@@ -4840,6 +4840,7 @@ dependencies = [
     { name = "xxhash" },
     { name = "yfinance" },
     { name = "zhipuai" },
+    { name = "flagembedding" },
 ]
 
 [package.optional-dependencies]
