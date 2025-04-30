@@ -1,122 +1,94 @@
-FROM --platform=linux/amd64 docker.io/infiniflow/ragflow_deps:latest@sha256:d963eef897cc6254ef2cadb4977c537b7791492931052df2af1804508290f64c AS base
+# Stage 1: Builder stage - for compiling and installing dependencies
+FROM public.ecr.aws/lambda/python:3.11 AS builder
+
 USER root
-SHELL ["/bin/bash", "-c"]
+WORKDIR /var/task
 
-ARG NEED_MIRROR=0
-ARG LIGHTEN=0
-ENV LIGHTEN=${LIGHTEN}
+# Install build dependencies for C extensions, LLVM, ICU, and curl
+RUN yum update -y && \
+    yum groupinstall -y "Development Tools" && \
+    yum install -y gcc-c++ python3-devel llvm-devel \
+    libicu-devel libffi-devel openssl-devel curl \
+    mesa-libGL unixODBC unixODBC-devel && \
+    yum clean all && \
+    rm -rf /var/cache/yum
 
-WORKDIR /ragflow
+# Install Rust toolchain (rustup) for compiling Rust extensions (required for primp package v0.14.0+)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 
-# Copy models downloaded via download_deps.py
-RUN mkdir -p /ragflow/rag/res/deepdoc && \
-    mkdir -p /app/.ragflow && \
-    chown -R 1000:1000 /ragflow /app
+# Set Rust environment variables so Cargo is available
+ENV CARGO_HOME=/root/.cargo
+ENV PATH=/root/.cargo/bin:${PATH}
+ENV UV_HTTP_TIMEOUT=120
 
-USER 1000
+# Set up virtual environment
+ENV VIRTUAL_ENV=/var/task/.venv
+RUN python -m venv ${VIRTUAL_ENV}
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PYTHONPATH=/var/task
 
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co,target=/huggingface.co \
-    cp /huggingface.co/InfiniFlow/huqie/huqie.txt.trie /ragflow/rag/res/ && \
-    tar --exclude='.*' -cf - \
-        /huggingface.co/InfiniFlow/text_concat_xgb_v1.0 \
-        /huggingface.co/InfiniFlow/deepdoc \
-        | tar -xf - --strip-components=3 -C /ragflow/rag/res/deepdoc
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co,target=/huggingface.co \
-    if [ "$LIGHTEN" != "1" ]; then \
-        (tar -cf - \
-            /huggingface.co/BAAI/bge-large-zh-v1.5 \
-            /huggingface.co/BAAI/bge-reranker-v2-m3 \
-            /huggingface.co/maidalun1020/bce-embedding-base_v1 \
-            /huggingface.co/maidalun1020/bce-reranker-base_v1 \
-            | tar -xf - --strip-components=2 -C /app/.ragflow) \
-    fi
+# Install uv tool
+RUN curl -sSfL https://astral.sh/uv/install.sh | sh
 
-# https://github.com/chrismattmann/tika-python
-# This is the only way to run python-tika without internet access. Without this set, the default is to check the tika version and pull latest every time from Apache.
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
-    cp -r /deps/nltk_data /app/ && \
-    cp /deps/tika-server-standard-3.0.0.jar /deps/tika-server-standard-3.0.0.jar.md5 /ragflow/ && \
-    cp /deps/cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+# Copy only dependency files first for better caching
+COPY pyproject.toml uv.lock ./
 
-ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.0.0.jar"
-ENV DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
+    pip install uv && \
+    uv sync --python 3.11 --frozen
+RUN pip install xgboost onnxruntime
+RUN python -m nltk.downloader wordnet punkt_tab
+# Stage 2: Final slim image - contains only runtime dependencies
+FROM public.ecr.aws/lambda/python:3.11
 
-# Setup apt
-# Python package and implicit dependencies:
-# opencv-python: libglib2.0-0 libglx-mesa0 libgl1
-# aspose-slides: pkg-config libicu-dev libgdiplus         libssl1.1_1.1.1f-1ubuntu2_amd64.deb
-# python-pptx:   default-jdk                              tika-server-standard-3.0.0.jar
-# selenium:      libatk-bridge2.0-0                       chrome-linux64-121-0-6167-85
-# Building C extensions: libpython3-dev libgtk-4-1 libnss3 xdg-utils libgbm-dev
-RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
-    if [ "$NEED_MIRROR" == "1" ]; then \
-        sed -i 's|http://archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list; \
-    fi; \
-    rm -f /etc/apt/apt.conf.d/docker-clean && \
-    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache && \
-    chmod 1777 /tmp && \
-    apt update && \
-    apt --no-install-recommends install -y ca-certificates && \
-    apt update && \
-    apt install -y libglib2.0-0 libglx-mesa0 libgl1 && \
-    apt install -y pkg-config libicu-dev libgdiplus && \
-    apt install -y default-jdk && \
-    apt install -y libatk-bridge2.0-0 && \
-    apt install -y libpython3-dev libgtk-4-1 libnss3 xdg-utils libgbm-dev && \
-    apt install -y python3-pip pipx unzip curl wget git vim less
+USER root
+WORKDIR /var/task
 
-RUN if [ "$NEED_MIRROR" == "1" ]; then \
-        pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-        pip3 config set global.trusted-host pypi.tuna.tsinghua.edu.cn; \
-        mkdir -p /etc/uv && \
-        echo "[[index]]" > /etc/uv/uv.toml && \
-        echo 'url = "https://pypi.tuna.tsinghua.edu.cn/simple"' >> /etc/uv/uv.toml && \
-        echo "default = true" >> /etc/uv/uv.toml; \
-    fi; \
-    pipx install uv
+# Install only runtime dependencies (not build tools)
+RUN yum update -y && \
+    yum install -y libicu curl mesa-libGL unixODBC && \
+    yum clean all && \
+    rm -rf /var/cache/yum
 
-ENV PYTHONDONTWRITEBYTECODE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
-ENV PATH=/app/.local/bin:$PATH
+# Copy virtual environment from builder
+ENV VIRTUAL_ENV=/var/task/.venv
+COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 
-# nodejs 12.22 on Ubuntu 22.04 is too old
-RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt purge -y nodejs npm cargo && \
-    apt autoremove -y && \
-    apt update && \
-    apt install -y nodejs
+# Copy NLTK data from builder stage
+COPY --from=builder /root/nltk_data /root/nltk_data
 
-# A modern version of cargo is needed for the latest version of the Rust compiler.
-RUN apt update && apt install -y curl build-essential \
-    && if [ "$NEED_MIRROR" == "1" ]; then \
-         # Use TUNA mirrors for rustup/rust dist files
-         export RUSTUP_DIST_SERVER="https://mirrors.tuna.tsinghua.edu.cn/rustup"; \
-         export RUSTUP_UPDATE_ROOT="https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup"; \
-         echo "Using TUNA mirrors for Rustup."; \
-       fi; \
-    # Force curl to use HTTP/1.1
-    curl --proto '=https' --tlsv1.2 --http1.1 -sSf https://sh.rustup.rs | bash -s -- -y --profile minimal \
-    && echo 'export PATH="/app/.cargo/bin:${PATH}"' >> /app/.bashrc
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PYTHONPATH=/var/task
 
-ENV PATH="/app/.cargo/bin:${PATH}"
+# Copy application code
+COPY api api
+COPY conf conf
+COPY deepdoc deepdoc
+COPY rag rag
+COPY agent agent
+COPY graphrag graphrag
+COPY agentic_reasoning agentic_reasoning
 
-RUN cargo --version && rustc --version
+# Copy config files and scripts
+COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
+COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 
-FROM base AS builder
-WORKDIR /ragflow
+# Set environment variables for networking
+ENV HOST_IP="0.0.0.0"
+ENV HOST_PORT=80
 
-# Install production dependencies
-RUN --mount=type=cache,id=ragflow_uv,target=/app/.cache/uv \
-    uv pip install --no-deps -r requirements.txt
+# Set environment variables for enhanced logging
+ENV DEBUG=false
+ENV VERBOSE=false
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
+ENV LOG_LEVEL=DEBUG
 
-FROM base AS runtime
-WORKDIR /ragflow
+# Expose port 80 for HTTP traffic
+EXPOSE 80
 
-# Copy only necessary artifacts
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-COPY . .
+# Make entrypoint script executable 
+RUN chmod +x ./entrypoint-parser.sh
 
-# Worker-specific configuration
-ENV PYTHONPATH=/ragflow
-CMD ["python", "rag/svr/task_executor.py", "--worker"]
+# Override the default Lambda entrypoint
+ENTRYPOINT ["./entrypoint-parser.sh"]
