@@ -36,7 +36,7 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     pip install uv && \
     uv sync --python 3.11 --frozen
-RUN pip install xgboost onnxruntime
+RUN pip install xgboost onnxruntime exceptiongroup
 RUN python -m nltk.downloader wordnet punkt_tab
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/python:3.11
@@ -88,7 +88,7 @@ ENV LOG_LEVEL=DEBUG
 EXPOSE 80
 
 # Make entrypoint script executable 
-RUN chmod +x ./entrypoint-parser.sh
+RUN chmod +x ./entrypoint.sh
 
 # Override the default Lambda entrypoint
-ENTRYPOINT ["./entrypoint-parser.sh"]
+CMD ["python", "rag/svr/task_executor.py", "--worker"]
