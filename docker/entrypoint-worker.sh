@@ -60,8 +60,11 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-# Fix for worker mode - ensure we use the correct path format
-echo "$(date): Running rag/svr/task_executor.py with arguments: --worker"
+# Get current Unix timestamp
+TIMESTAMP=$(date +%s)
 
-# Execute the task executor with worker flag
-$PY /var/task/rag/svr/task_executor.py --worker
+# Show what we're executing
+echo "$(date): Running rag/svr/task_executor.py with arguments: $TIMESTAMP"
+
+# Execute the task executor with Unix timestamp as argument
+$PY /var/task/rag/svr/task_executor.py $TIMESTAMP

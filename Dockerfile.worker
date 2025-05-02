@@ -91,5 +91,5 @@ EXPOSE 80
 RUN chmod +x ./entrypoint.sh ./entrypoint-parser.sh ./entrypoint-worker.sh
 
 # Override the default Lambda entrypoint with our worker-specific entrypoint script
+# The entrypoint script now generates and passes the timestamp automatically
 ENTRYPOINT ["/var/task/entrypoint-worker.sh"]
-CMD ["rag/svr/task_executor.py", "--worker"]
