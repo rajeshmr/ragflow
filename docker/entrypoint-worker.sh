@@ -54,11 +54,7 @@ else
     echo "Disk info not available (df command not found)"
 fi
 
-# Display command to be executed
-if [ $# -eq 0 ]; then
-    echo "$(date): ERROR: No command specified. Exiting."
-    exit 1
-fi
+# We run with a hardcoded script path and timestamp, no need to check for arguments
 
 # Get current Unix timestamp
 TIMESTAMP=$(date +%s)
