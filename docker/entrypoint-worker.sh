@@ -54,14 +54,14 @@ else
     echo "Disk info not available (df command not found)"
 fi
 
-# Check command line arguments
+# Display command to be executed
 if [ $# -eq 0 ]; then
     echo "$(date): ERROR: No command specified. Exiting."
     exit 1
 fi
 
-SCRIPT_PATH="$1"
-shift  # Remove the first argument, leaving any additional arguments
+# Fix for worker mode - ensure we use the correct path format
+echo "$(date): Running rag/svr/task_executor.py with arguments: --worker"
 
-echo "$(date): Running $SCRIPT_PATH with arguments: $@"
-$PY "$SCRIPT_PATH" "$@"
+# Execute the task executor with worker flag
+$PY /var/task/rag/svr/task_executor.py --worker
