@@ -71,7 +71,7 @@ COPY agentic_reasoning agentic_reasoning
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
-COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
+COPY docker/entrypoint.sh docker/entrypoint-parser.sh docker/entrypoint-worker.sh ./
 
 # Set environment variables for networking
 ENV HOST_IP="0.0.0.0"
@@ -87,8 +87,9 @@ ENV LOG_LEVEL=DEBUG
 # Expose port 80 for HTTP traffic
 EXPOSE 80
 
-# Make entrypoint script executable 
-RUN chmod +x ./entrypoint.sh
+# Make entrypoint scripts executable 
+RUN chmod +x ./entrypoint.sh ./entrypoint-parser.sh ./entrypoint-worker.sh
 
-# Override the default Lambda entrypoint
-CMD ["python", "rag/svr/task_executor.py", "--worker"]
+# Override the default Lambda entrypoint with our worker-specific entrypoint script
+ENTRYPOINT ["/var/task/entrypoint-worker.sh"]
+CMD ["rag/svr/task_executor.py", "--worker"]
