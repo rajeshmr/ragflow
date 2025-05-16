@@ -44,7 +44,7 @@ class RAGFlowMinio:
                               )
         except Exception:
             logging.exception(
-                "Fail to connect %s " % settings.MINIO["host"])
+                "Fail to connect %s " % settings.MINIO["host"] if "host" in settings.MINIO else "invalid host")
 
     def __close__(self):
         del self.conn
