@@ -24,6 +24,10 @@ redis:
   db: 1
   password: '${REDIS_PASSWORD:-infini_rag_flow}'
   host: '${REDIS_HOST:-redis}:6379'
+s3:
+  access_key: '${AWS_S3_ACCESS_KEY:-access_key}'
+  secret_key: '${AWS_S3_SECRET_KEY:-secret_key}'
+  region: '${AWS_S3_REGION:-us-east-1}'
 
 # postgres:
 #   name: '${POSTGRES_DBNAME:-rag_flow}'
