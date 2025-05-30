@@ -36,7 +36,7 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     pip install uv && \
     uv sync --python 3.11 --frozen
-RUN pip install xgboost onnxruntime exceptiongroup
+RUN pip install xgboost onnxruntime
 RUN python -m nltk.downloader wordnet punkt_tab
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/python:3.11
@@ -71,7 +71,7 @@ COPY agentic_reasoning agentic_reasoning
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
-COPY docker/entrypoint.sh docker/entrypoint-parser.sh docker/entrypoint-worker.sh ./
+COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 
 # Set environment variables for networking
 ENV HOST_IP="0.0.0.0"
@@ -87,9 +87,8 @@ ENV LOG_LEVEL=DEBUG
 # Expose port 80 for HTTP traffic
 EXPOSE 80
 
-# Make entrypoint scripts executable 
-RUN chmod +x ./entrypoint.sh ./entrypoint-parser.sh ./entrypoint-worker.sh
+# Make entrypoint script executable 
+RUN chmod +x ./entrypoint.sh
 
-# Override the default Lambda entrypoint with our worker-specific entrypoint script
-# The entrypoint script now generates and passes the timestamp automatically
-ENTRYPOINT ["/var/task/entrypoint-worker.sh"]
+# Override the default Lambda entrypoint
+ENTRYPOINT ["./entrypoint.sh"]

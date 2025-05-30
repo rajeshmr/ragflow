@@ -544,14 +544,15 @@ class OCR:
                                               local_dir=os.path.join(get_project_base_directory(), "rag/res/deepdoc"),
                                               local_dir_use_symlinks=False)
                 
-                if PARALLEL_DEVICES is not None:
-                    assert PARALLEL_DEVICES > 0, "Number of devices must be >= 1"
+                # Handle the case where PARALLEL_DEVICES is None or 0
+                if PARALLEL_DEVICES is not None and PARALLEL_DEVICES > 0:
                     self.text_detector = []
                     self.text_recognizer = []
                     for device_id in range(PARALLEL_DEVICES):
                         self.text_detector.append(TextDetector(model_dir, device_id))
                         self.text_recognizer.append(TextRecognizer(model_dir, device_id))
                 else:
+                    # Default to CPU (device_id=0) if no CUDA devices available
                     self.text_detector = [TextDetector(model_dir, 0)]
                     self.text_recognizer = [TextRecognizer(model_dir, 0)]
 

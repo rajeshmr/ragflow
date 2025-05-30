@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: SAM template for RAGFlow API
+
+Globals:
+  Function:
+    Timeout: 29
+    MemorySize: 1024
+
+Resources:
+  RagFlowFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          PYTHONPATH: /var/task
+          STAGE: prod
+      Events:
+        RagFlowAPI:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+      Policies:
+        - AWSLambdaBasicExecutionRole
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ./
+      DockerTag: python3.10-v1

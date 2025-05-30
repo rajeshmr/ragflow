@@ -16,7 +16,7 @@ RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co
     tar --exclude='.*' -cf - \
         /huggingface.co/InfiniFlow/text_concat_xgb_v1.0 \
         /huggingface.co/InfiniFlow/deepdoc \
-        | tar -xf - --strip-components=3 -C /ragflow/rag/res/deepdoc 
+        | tar -xf - --strip-components=3 -C /ragflow/rag/res/deepdoc
 RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co,target=/huggingface.co \
     if [ "$LIGHTEN" != "1" ]; then \
         (tar -cf - \
@@ -201,12 +201,11 @@ COPY agentic_reasoning agentic_reasoning
 COPY pyproject.toml uv.lock ./
 
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
-COPY docker/entrypoint.sh ./
+COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
 RUN chmod +x ./entrypoint*.sh
 
 # Copy compiled web pages
 COPY --from=builder /ragflow/web/dist /ragflow/web/dist
 
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
-EXPOSE 80
 ENTRYPOINT ["./entrypoint.sh"]
