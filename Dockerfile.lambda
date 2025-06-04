@@ -7,7 +7,7 @@ WORKDIR /var/task
 # Install build dependencies for C extensions, LLVM, ICU, and curl
 RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
-    yum install -y gcc-c++ python3-devel llvm-devel \
+    yum install -y gcc-c++ python3-devel python3-venv llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
     mesa-libGL unixODBC unixODBC-devel && \
     yum clean all && \
