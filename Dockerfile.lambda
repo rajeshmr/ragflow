@@ -9,7 +9,7 @@ RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
     yum install -y gcc-c++ python3-devel python3-venv llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
-    mesa-libGL unixODBC unixODBC-devel && \
+    mesa-libGL unixODBC unixODBC-devel python3-pip && \
     yum clean all && \
     rm -rf /var/cache/yum
 
@@ -24,20 +24,17 @@ ENV UV_HTTP_TIMEOUT=120
 # Set Python path
 ENV PYTHONPATH=/var/task
 
-# Install uv tool
-RUN curl -sSfL https://astral.sh/uv/install.sh | sh
-
 # Copy only dependency files first for better caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies directly (without venv)
-RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
-    python -m pip install uv && \
-    python -m pip install --upgrade pip && \
-    uv sync --python 3.11 --frozen --index-url https://pypi.org/simple/
+# Install dependencies directly without using uv
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install xgboost onnxruntime 
 
-RUN python -m pip install xgboost onnxruntime
-RUN python -m nltk.downloader wordnet punkt_tab
+# Download NLTK data
+RUN python3 -m pip install nltk && \
+    python3 -m nltk.downloader wordnet punkt_tab
+
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/provided:al2-x86_64
 
