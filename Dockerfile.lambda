@@ -32,11 +32,11 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies directly (without venv)
 RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
-    pip install uv && \
-    pip install --upgrade pip && \
+    python -m pip install uv && \
+    python -m pip install --upgrade pip && \
     uv sync --python 3.11 --frozen --index-url https://pypi.org/simple/
 
-RUN pip install xgboost onnxruntime
+RUN python -m pip install xgboost onnxruntime
 RUN python -m nltk.downloader wordnet punkt_tab
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/provided:al2-x86_64
