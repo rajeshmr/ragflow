@@ -13,7 +13,7 @@ LABEL=$1
 echo "Building and pushing Docker image with label: $LABEL"
 
 # Build the Docker image
-docker build --platform linux/amd64 -f Dockerfile.lambda -t ragflow:$LABEL .
+docker build --platform linux/amd64 --build-arg LIGHTEN=1 -f Dockerfile.lambda -t ragflow:$LABEL .
 
 # Tag the image for ECR
 docker tag ragflow:$LABEL 304975023707.dkr.ecr.us-east-1.amazonaws.com/ragflow:$LABEL
