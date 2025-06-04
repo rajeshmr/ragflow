@@ -35,7 +35,8 @@ COPY pyproject.toml uv.lock ./
 
 RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     pip install uv && \
-    uv sync --python 3.11 --frozen
+    uv sync --python 3.11 --frozen --index-url https://pypi.org/simple/
+
 RUN pip install xgboost onnxruntime
 RUN python -m nltk.downloader wordnet punkt_tab
 # Stage 2: Final slim image - contains only runtime dependencies
