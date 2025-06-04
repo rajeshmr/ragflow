@@ -71,7 +71,7 @@ COPY agentic_reasoning agentic_reasoning
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
-COPY docker/entrypoint.sh docker/entrypoint-parser.sh ./
+COPY docker/entrypoint.sh ./
 
 # Set environment variables for networking
 ENV HOST_IP="0.0.0.0"
