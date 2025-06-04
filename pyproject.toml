@@ -165,7 +165,7 @@ packages = [
 ]
 
 [[tool.uv.index]]
-url = "https://mirrors.aliyun.com/pypi/simple"
+url = "https://pypi.org/simple/"
 
 [tool.ruff]
 line-length = 200
