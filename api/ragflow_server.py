@@ -19,43 +19,21 @@
 # beartype_all(conf=BeartypeConf(violation_type=UserWarning))    # <-- emit warnings from all code
 
 from api.utils.log_utils import initRootLogger
-import logging
-import sys
-import os
-import signal
-import time
-import traceback
-from concurrent.futures import ThreadPoolExecutor
-import threading
-import uuid
-
-# Configure root logger to output to stdout
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-root_logger.addHandler(handler)
-
+from plugin import GlobalPluginManager
 initRootLogger("ragflow_server")
 
-from api.apps import app
-
-
 import logging
 import os
 import signal
 import sys
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 import threading
 import uuid
 
 from werkzeug.serving import run_simple
 from api import settings
-
+from api.apps import app
 from api.db.runtime_config import RuntimeConfig
 from api.db.services.document_service import DocumentService
 from api import utils
@@ -69,6 +47,8 @@ from rag.utils.redis_conn import RedisDistributedLock
 
 stop_event = threading.Event()
 
+RAGFLOW_DEBUGPY_LISTEN = int(os.environ.get('RAGFLOW_DEBUGPY_LISTEN', "0"))
+
 def update_progress():
     lock_value = str(uuid.uuid4())
     redis_lock = RedisDistributedLock("update_progress", lock_value=lock_value, timeout=60)
@@ -81,6 +61,8 @@ def update_progress():
             stop_event.wait(6)
         except Exception:
             logging.exception("update_progress exception")
+        finally:
+            redis_lock.release()
 
 def signal_handler(sig, frame):
     logging.info("Received interrupt signal, shutting down...")
@@ -107,6 +89,11 @@ if __name__ == '__main__':
     settings.init_settings()
     print_rag_settings()
 
+    if RAGFLOW_DEBUGPY_LISTEN > 0:
+        logging.info(f"debugpy listen on {RAGFLOW_DEBUGPY_LISTEN}")
+        import debugpy
+        debugpy.listen(("0.0.0.0", RAGFLOW_DEBUGPY_LISTEN))
+
     # init db
     init_web_db()
     init_web_data()
@@ -132,11 +119,21 @@ if __name__ == '__main__':
     RuntimeConfig.init_env()
     RuntimeConfig.init_config(JOB_SERVER_HOST=settings.HOST_IP, HTTP_PORT=settings.HOST_PORT)
 
+    GlobalPluginManager.load_plugins()
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    thread = ThreadPoolExecutor(max_workers=1)
-    thread.submit(update_progress)
+    def delayed_start_update_progress():
+        logging.info("Starting update_progress thread (delayed)")
+        t = threading.Thread(target=update_progress, daemon=True)
+        t.start()
+
+    if RuntimeConfig.DEBUG:
+        if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+            threading.Timer(1.0, delayed_start_update_progress).start()
+    else:
+        threading.Timer(1.0, delayed_start_update_progress).start()
 
     # start http server
     try:

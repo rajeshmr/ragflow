@@ -19,8 +19,10 @@ import operator
 import os
 import sys
 import typing
+import time
 from enum import Enum
 from functools import wraps
+import hashlib
 
 from flask_login import UserMixin
 from itsdangerous.url_safe import URLSafeTimedSerializer as Serializer
@@ -260,14 +262,54 @@ class BaseDataBase:
         logging.info("init database on cluster mode successfully")
 
 
+def with_retry(max_retries=3, retry_delay=1.0):
+    """Decorator: Add retry mechanism to database operations
+    
+    Args:
+        max_retries (int): maximum number of retries
+        retry_delay (float): initial retry delay (seconds), will increase exponentially
+        
+    Returns:
+        decorated function
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for retry in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    # get self and method name for logging
+                    self_obj = args[0] if args else None
+                    func_name = func.__name__
+                    lock_name = getattr(self_obj, 'lock_name', 'unknown') if self_obj else 'unknown'
+                    
+                    if retry < max_retries - 1:
+                        current_delay = retry_delay * (2 ** retry)
+                        logging.warning(f"{func_name} {lock_name} failed: {str(e)}, retrying ({retry+1}/{max_retries})")
+                        time.sleep(current_delay)
+                    else:
+                        logging.error(f"{func_name} {lock_name} failed after all attempts: {str(e)}")
+            
+            if last_exception:
+                raise last_exception
+            return False
+        return wrapper
+    return decorator
+
+
 class PostgresDatabaseLock:
     def __init__(self, lock_name, timeout=10, db=None):
         self.lock_name = lock_name
+        self.lock_id = int(hashlib.md5(lock_name.encode()).hexdigest(), 16) % (2**31-1)
         self.timeout = int(timeout)
         self.db = db if db else DB
 
+    @with_retry(max_retries=3, retry_delay=1.0)
     def lock(self):
-        cursor = self.db.execute_sql("SELECT pg_try_advisory_lock(%s)", self.timeout)
+        cursor = self.db.execute_sql("SELECT pg_try_advisory_lock(%s)", (self.lock_id,))
         ret = cursor.fetchone()
         if ret[0] == 0:
             raise Exception(f"acquire postgres lock {self.lock_name} timeout")
@@ -276,8 +318,9 @@ class PostgresDatabaseLock:
         else:
             raise Exception(f"failed to acquire lock {self.lock_name}")
 
+    @with_retry(max_retries=3, retry_delay=1.0)
     def unlock(self):
-        cursor = self.db.execute_sql("SELECT pg_advisory_unlock(%s)", self.timeout)
+        cursor = self.db.execute_sql("SELECT pg_advisory_unlock(%s)", (self.lock_id,))
         ret = cursor.fetchone()
         if ret[0] == 0:
             raise Exception(f"postgres lock {self.lock_name} was not established by this thread")
@@ -287,12 +330,12 @@ class PostgresDatabaseLock:
             raise Exception(f"postgres lock {self.lock_name} does not exist")
 
     def __enter__(self):
-        if isinstance(self.db, PostgresDatabaseLock):
+        if isinstance(self.db, PooledPostgresqlDatabase):
             self.lock()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if isinstance(self.db, PostgresDatabaseLock):
+        if isinstance(self.db, PooledPostgresqlDatabase):
             self.unlock()
 
     def __call__(self, func):
@@ -310,6 +353,7 @@ class MysqlDatabaseLock:
         self.timeout = int(timeout)
         self.db = db if db else DB
 
+    @with_retry(max_retries=3, retry_delay=1.0)
     def lock(self):
         # SQL parameters only support %s format placeholders
         cursor = self.db.execute_sql("SELECT GET_LOCK(%s, %s)", (self.lock_name, self.timeout))
@@ -321,6 +365,7 @@ class MysqlDatabaseLock:
         else:
             raise Exception(f"failed to acquire lock {self.lock_name}")
 
+    @with_retry(max_retries=3, retry_delay=1.0)
     def unlock(self):
         cursor = self.db.execute_sql("SELECT RELEASE_LOCK(%s)", (self.lock_name,))
         ret = cursor.fetchone()
@@ -379,13 +424,18 @@ def init_database_tables(alter_fields=[]):
     for name, obj in members:
         if obj != DataBaseModel and issubclass(obj, DataBaseModel):
             table_objs.append(obj)
-            logging.debug(f"start create table {obj.__name__}")
-            try:
-                obj.create_table()
-                logging.debug(f"create table success: {obj.__name__}")
-            except Exception as e:
-                logging.exception(e)
-                create_failed_list.append(obj.__name__)
+
+            if not obj.table_exists():
+                logging.debug(f"start create table {obj.__name__}")
+                try:
+                    obj.create_table()
+                    logging.debug(f"create table success: {obj.__name__}")
+                except Exception as e:
+                    logging.exception(e)
+                    create_failed_list.append(obj.__name__)
+            else:
+                logging.debug(f"table {obj.__name__} already exists, skip creation.")
+
     if create_failed_list:
         logging.error(f"create tables failed: {create_failed_list}")
         raise Exception(f"create tables failed: {create_failed_list}")
@@ -492,6 +542,7 @@ class LLM(DataBaseModel):
     max_tokens = IntegerField(default=0)
 
     tags = CharField(max_length=255, null=False, help_text="LLM, Text Embedding, Image2Text, Chat, 32k...", index=True)
+    is_tools =  BooleanField(null=False, help_text="support tools", default=False)
     status = CharField(max_length=1, null=True, help_text="is it validate(0: wasted, 1: validate)", default="1", index=True)
 
     def __str__(self):
@@ -746,90 +797,93 @@ class UserCanvasVersion(DataBaseModel):
 
 
 def migrate_db():
-    with DB.transaction():
-        migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
-        try:
-            migrate(migrator.add_column("file", "source_type", CharField(max_length=128, null=False, default="", help_text="where dose this document come from", index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("tenant", "rerank_id", CharField(max_length=128, null=False, default="BAAI/bge-reranker-v2-m3", help_text="default rerank model ID")))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("dialog", "rerank_id", CharField(max_length=128, null=False, default="", help_text="default rerank model ID")))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("dialog", "top_k", IntegerField(default=1024)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.alter_column_type("tenant_llm", "api_key", CharField(max_length=2048, null=True, help_text="API KEY", index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("api_token", "source", CharField(max_length=16, null=True, help_text="none|agent|dialog", index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("tenant", "tts_id", CharField(max_length=256, null=True, help_text="default tts model ID", index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("api_4_conversation", "source", CharField(max_length=16, null=True, help_text="none|agent|dialog", index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("task", "retry_count", IntegerField(default=0)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.alter_column_type("api_token", "dialog_id", CharField(max_length=32, null=True, index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("tenant_llm", "max_tokens", IntegerField(default=8192, index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("api_4_conversation", "dsl", JSONField(null=True, default={})))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("knowledgebase", "pagerank", IntegerField(default=0, index=False)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("api_token", "beta", CharField(max_length=255, null=True, index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("task", "digest", TextField(null=True, help_text="task digest", default="")))
-        except Exception:
-            pass
+    migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
+    try:
+        migrate(migrator.add_column("file", "source_type", CharField(max_length=128, null=False, default="", help_text="where dose this document come from", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("tenant", "rerank_id", CharField(max_length=128, null=False, default="BAAI/bge-reranker-v2-m3", help_text="default rerank model ID")))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("dialog", "rerank_id", CharField(max_length=128, null=False, default="", help_text="default rerank model ID")))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("dialog", "top_k", IntegerField(default=1024)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.alter_column_type("tenant_llm", "api_key", CharField(max_length=2048, null=True, help_text="API KEY", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("api_token", "source", CharField(max_length=16, null=True, help_text="none|agent|dialog", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("tenant", "tts_id", CharField(max_length=256, null=True, help_text="default tts model ID", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("api_4_conversation", "source", CharField(max_length=16, null=True, help_text="none|agent|dialog", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("task", "retry_count", IntegerField(default=0)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.alter_column_type("api_token", "dialog_id", CharField(max_length=32, null=True, index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("tenant_llm", "max_tokens", IntegerField(default=8192, index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("api_4_conversation", "dsl", JSONField(null=True, default={})))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("knowledgebase", "pagerank", IntegerField(default=0, index=False)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("api_token", "beta", CharField(max_length=255, null=True, index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("task", "digest", TextField(null=True, help_text="task digest", default="")))
+    except Exception:
+        pass
 
-        try:
-            migrate(migrator.add_column("task", "chunk_ids", LongTextField(null=True, help_text="chunk ids", default="")))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("conversation", "user_id", CharField(max_length=255, null=True, help_text="user_id", index=True)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("document", "meta_fields", JSONField(null=True, default={})))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("task", "task_type", CharField(max_length=32, null=False, default="")))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("task", "priority", IntegerField(default=0)))
-        except Exception:
-            pass
-        try:
-            migrate(migrator.add_column("user_canvas", "permission", CharField(max_length=16, null=False, help_text="me|team", default="me", index=True)))
-        except Exception:
-            pass
+    try:
+        migrate(migrator.add_column("task", "chunk_ids", LongTextField(null=True, help_text="chunk ids", default="")))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("conversation", "user_id", CharField(max_length=255, null=True, help_text="user_id", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("document", "meta_fields", JSONField(null=True, default={})))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("task", "task_type", CharField(max_length=32, null=False, default="")))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("task", "priority", IntegerField(default=0)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("user_canvas", "permission", CharField(max_length=16, null=False, help_text="me|team", default="me", index=True)))
+    except Exception:
+        pass
+    try:
+        migrate(migrator.add_column("llm", "is_tools", BooleanField(null=False, help_text="support tools", default=False)))
+    except Exception:
+        pass

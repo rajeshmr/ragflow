@@ -208,7 +208,7 @@ class YoudaoRerank(DefaultRerank):
 
 
 class XInferenceRerank(Base):
-    def __init__(self, key="xxxxxxx", model_name="", base_url=""):
+    def __init__(self, key="x", model_name="", base_url=""):
         if base_url.find("/v1") == -1:
             base_url = urljoin(base_url, "/v1/rerank")
         if base_url.find("/rerank") == -1:
@@ -217,9 +217,10 @@ class XInferenceRerank(Base):
         self.base_url = base_url
         self.headers = {
             "Content-Type": "application/json",
-            "accept": "application/json",
-            "Authorization": f"Bearer {key}"
+            "accept": "application/json"
         }
+        if key and key != "x":
+            self.headers["Authorization"] = f"Bearer {key}"
 
     def similarity(self, query: str, texts: list):
         if len(texts) == 0:
@@ -295,12 +296,11 @@ class NvidiaRerank(Base):
         self.model_name = model_name
 
         if self.model_name == "nvidia/nv-rerankqa-mistral-4b-v3":
-            self.base_url = os.path.join(
-                base_url, "nv-rerankqa-mistral-4b-v3", "reranking"
+            self.base_url = urljoin(base_url, "nv-rerankqa-mistral-4b-v3/reranking"
             )
 
         if self.model_name == "nvidia/rerank-qa-mistral-4b":
-            self.base_url = os.path.join(base_url, "reranking")
+            self.base_url = urljoin(base_url, "reranking")
             self.model_name = "nv-rerank-qa-mistral-4b:1"
 
         self.headers = {
