@@ -36,21 +36,24 @@ RUN python3 -m pip install nltk && \
     python3 -m nltk.downloader wordnet punkt_tab
 
 # Stage 2: Final slim image - contains only runtime dependencies
-FROM public.ecr.aws/lambda/provided:al2-x86_64
+FROM public.ecr.aws/lambda/python:3.11
 
 USER root
 WORKDIR /var/task
 
 # Install only runtime dependencies (not build tools)
 RUN yum update -y && \
-    yum install -y libicu curl mesa-libGL unixODBC && \
+    yum install -y libicu curl mesa-libGL unixODBC hostname && \
     yum clean all && \
     rm -rf /var/cache/yum
+
+# Copy Python packages from builder stage
+COPY --from=builder /var/task/. /var/task/
 
 # Copy NLTK data from builder stage
 COPY --from=builder /root/nltk_data /root/nltk_data
 
-ENV PATH=/usr/local/bin:${PATH}
+# Set Python path
 ENV PYTHONPATH=/var/task
 
 # Copy application code
@@ -64,7 +67,7 @@ COPY agentic_reasoning agentic_reasoning
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
-COPY docker/entrypoint.sh ./
+COPY docker/entrypoint-lambda.sh ./
 
 # Set environment variables for networking
 ENV HOST_IP="0.0.0.0"
@@ -81,7 +84,7 @@ ENV LOG_LEVEL=DEBUG
 EXPOSE 80
 
 # Make entrypoint script executable 
-RUN chmod +x ./entrypoint.sh
+RUN chmod +x ./entrypoint-lambda.sh
 
 # Override the default Lambda entrypoint
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["./entrypoint-lambda.sh"]
