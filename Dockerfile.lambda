@@ -1,5 +1,5 @@
 # Stage 1: Builder stage - for compiling and installing dependencies
-FROM public.ecr.aws/lambda/python:3.11 AS builder
+FROM public.ecr.aws/lambda/python:3.10 AS builder
 
 USER root
 WORKDIR /var/task
@@ -7,7 +7,7 @@ WORKDIR /var/task
 # Install build dependencies for C extensions, LLVM, ICU, and curl
 RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
-    yum install -y gcc-c++ python3-devel python3-venv llvm-devel \
+    yum install -y libicu-devel gcc-c++ python3-devel python3-venv llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
     mesa-libGL unixODBC unixODBC-devel python3-pip && \
     yum clean all && \
@@ -30,23 +30,26 @@ COPY pyproject.toml ./
 # Check Python version
 RUN python3 --version
 
-# Install dependencies directly without using uv
-RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install xgboost onnxruntime tomli
+# Install pip and tomli first
+RUN python3 -m pip install --upgrade pip tomli
 
 # Install NLTK and download required data
 RUN python3 -m pip install nltk && \
     python3 -m nltk.downloader wordnet punkt_tab
 
-# Extract dependencies from pyproject.toml and install with pip, replacing onnxruntime-gpu with onnxruntime
 RUN python3 -c "import tomli; import sys; \
     deps = tomli.load(open('pyproject.toml', 'rb'))['project']['dependencies']; \
-    print('\n'.join([d.replace('onnxruntime-gpu', 'onnxruntime') for d in deps]))" > requirements.txt && \
+    # Replace onnxruntime and exclude problematic packages \
+    deps_fixed = [d.replace('onnxruntime-gpu==1.19.2', 'onnxruntime==1.16.3').replace('onnxruntime==1.19.2', 'onnxruntime==1.16.3') for d in deps if not d.startswith('pyicu')]; \
+    print('\n'.join(deps_fixed))" > requirements.txt && \
     cat requirements.txt && \
     python3 -m pip install -r requirements.txt
 
+# Install xgboost separately (sometimes has conflicts with other packages)
+RUN python3 -m pip install xgboost
+
 # Stage 2: Final slim image - contains only runtime dependencies
-FROM public.ecr.aws/lambda/python:3.11
+FROM public.ecr.aws/lambda/python:3.10
 
 USER root
 WORKDIR /var/task
@@ -58,7 +61,8 @@ RUN yum update -y && \
     rm -rf /var/cache/yum
 
 # Copy Python packages from builder stage
-COPY --from=builder /var/task/. /var/task/
+COPY --from=builder /var/lang/lib/python3.10/site-packages/ /var/lang/lib/python3.10/site-packages/
+COPY --from=builder /var/runtime/ /var/runtime/
 
 # Copy NLTK data from builder stage
 COPY --from=builder /root/nltk_data /root/nltk_data
