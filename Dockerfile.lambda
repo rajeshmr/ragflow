@@ -1,5 +1,5 @@
 # Stage 1: Builder stage - for compiling and installing dependencies
-FROM public.ecr.aws/lambda/provided:al2-x86_64 AS builder
+FROM public.ecr.aws/lambda/python:3.11 AS builder
 
 USER root
 WORKDIR /var/task
@@ -25,15 +25,25 @@ ENV UV_HTTP_TIMEOUT=120
 ENV PYTHONPATH=/var/task
 
 # Copy only dependency files first for better caching
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
+
+# Check Python version
+RUN python3 --version
 
 # Install dependencies directly without using uv
 RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install xgboost onnxruntime 
+    python3 -m pip install xgboost onnxruntime tomli
 
-# Download NLTK data
+# Install NLTK and download required data
 RUN python3 -m pip install nltk && \
     python3 -m nltk.downloader wordnet punkt_tab
+
+# Extract dependencies from pyproject.toml and install with pip, replacing onnxruntime-gpu with onnxruntime
+RUN python3 -c "import tomli; import sys; \
+    deps = tomli.load(open('pyproject.toml', 'rb'))['project']['dependencies']; \
+    print('\n'.join([d.replace('onnxruntime-gpu', 'onnxruntime') for d in deps]))" > requirements.txt && \
+    cat requirements.txt && \
+    python3 -m pip install -r requirements.txt
 
 # Stage 2: Final slim image - contains only runtime dependencies
 FROM public.ecr.aws/lambda/python:3.11
