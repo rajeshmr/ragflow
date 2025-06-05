@@ -78,6 +78,8 @@ COPY rag rag
 COPY agent agent
 COPY graphrag graphrag
 COPY agentic_reasoning agentic_reasoning
+COPY mcp mcp
+COPY plugin plugin
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
