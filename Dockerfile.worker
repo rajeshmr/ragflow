@@ -85,7 +85,7 @@ COPY plugin plugin
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
-COPY docker/entrypoint.sh docker/entrypoint-parser.sh docker/entrypoint-worker.sh ./
+COPY docker/entrypoint-worker.sh ./
 
 # Set environment variables for networking
 ENV HOST_IP="0.0.0.0"
@@ -101,8 +101,8 @@ ENV LOG_LEVEL=DEBUG
 # Expose port 80 for HTTP traffic
 EXPOSE 80
 
-# Make entrypoint scripts executable 
-RUN chmod +x ./entrypoint.sh ./entrypoint-parser.sh ./entrypoint-worker.sh
+# Make entrypoint scripts executable
+RUN chmod +x ./entrypoint-worker.sh
 
 # Override the default Lambda entrypoint with our worker-specific entrypoint script
 # The entrypoint script now generates and passes the timestamp automatically
