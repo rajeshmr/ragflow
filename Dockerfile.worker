@@ -1,5 +1,5 @@
 # Stage 1: Builder stage - for compiling and installing dependencies
-FROM public.ecr.aws/lambda/python:3.11 AS builder
+FROM public.ecr.aws/lambda/python:3.10 AS builder
 
 USER root
 WORKDIR /var/task
@@ -7,9 +7,9 @@ WORKDIR /var/task
 # Install build dependencies for C extensions, LLVM, ICU, and curl
 RUN yum update -y && \
     yum groupinstall -y "Development Tools" && \
-    yum install -y gcc-c++ python3-devel llvm-devel \
+    yum install -y gcc-c++ python3-devel python3-venv llvm-devel \
     libicu-devel libffi-devel openssl-devel curl \
-    mesa-libGL unixODBC unixODBC-devel && \
+    mesa-libGL unixODBC unixODBC-devel python3-pip && \
     yum clean all && \
     rm -rf /var/cache/yum
 
@@ -21,43 +21,56 @@ ENV CARGO_HOME=/root/.cargo
 ENV PATH=/root/.cargo/bin:${PATH}
 ENV UV_HTTP_TIMEOUT=120
 
-# Set up virtual environment
-ENV VIRTUAL_ENV=/var/task/.venv
-RUN python -m venv ${VIRTUAL_ENV}
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+# Set Python path
 ENV PYTHONPATH=/var/task
 
-# Install uv tool
-RUN curl -sSfL https://astral.sh/uv/install.sh | sh
-
 # Copy only dependency files first for better caching
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 
-RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
-    pip install uv && \
-    uv sync --python 3.11 --frozen
-RUN pip install xgboost onnxruntime exceptiongroup
-RUN python -m nltk.downloader wordnet punkt_tab
+# Check Python version
+RUN python3 --version
+
+# Install pip and tomli first
+RUN python3 -m pip install --upgrade pip tomli
+
+# Install NLTK and download required data
+RUN python3 -m pip install nltk && \
+    python3 -m nltk.downloader wordnet punkt_tab
+
+# Extract dependencies from pyproject.toml and install with pip, replacing onnxruntime-gpu with compatible onnxruntime version
+RUN python3 -c "import tomli; import sys; \
+    deps = tomli.load(open('pyproject.toml', 'rb'))['project']['dependencies']; \
+    # Replace onnxruntime-gpu with onnxruntime, use compatible version, and exclude pyicu \
+    deps_fixed = [d.replace('onnxruntime-gpu==1.19.2', 'onnxruntime==1.16.3').replace('onnxruntime==1.19.2', 'onnxruntime==1.16.3') for d in deps if not d.startswith('pyicu')]; \
+    print('\n'.join(deps_fixed))" > requirements.txt && \
+    echo '--- Generated requirements.txt ---' && \
+    cat requirements.txt && \
+    echo '--- Installing requirements ---' && \
+    python3 -m pip install -r requirements.txt
+
+# Install xgboost separately (sometimes has conflicts with other packages)
+RUN python3 -m pip install xgboost
+
 # Stage 2: Final slim image - contains only runtime dependencies
-FROM public.ecr.aws/lambda/python:3.11
+FROM public.ecr.aws/lambda/python:3.10
 
 USER root
 WORKDIR /var/task
 
 # Install only runtime dependencies (not build tools)
 RUN yum update -y && \
-    yum install -y libicu curl mesa-libGL unixODBC && \
+    yum install -y libicu curl mesa-libGL unixODBC hostname && \
     yum clean all && \
     rm -rf /var/cache/yum
 
-# Copy virtual environment from builder
-ENV VIRTUAL_ENV=/var/task/.venv
-COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+# Copy Python packages from builder stage
+COPY --from=builder /var/lang/lib/python3.10/site-packages/ /var/lang/lib/python3.10/site-packages/
+COPY --from=builder /var/runtime/ /var/runtime/
 
 # Copy NLTK data from builder stage
 COPY --from=builder /root/nltk_data /root/nltk_data
 
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+# Set Python path
 ENV PYTHONPATH=/var/task
 
 # Copy application code
@@ -68,6 +81,7 @@ COPY rag rag
 COPY agent agent
 COPY graphrag graphrag
 COPY agentic_reasoning agentic_reasoning
+COPY plugin plugin
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
