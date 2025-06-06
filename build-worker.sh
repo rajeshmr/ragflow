@@ -15,8 +15,8 @@ echo "Building and pushing Docker image with label: $LABEL"
 # Build the Docker image
 docker build --platform linux/amd64 --build-arg LIGHTEN=1 -f Dockerfile.worker -t ragflow-worker:$LABEL .
 
-# Tag the image for ECR
-docker tag ragflow-worker:$LABEL 304975023707.dkr.ecr.us-east-1.amazonaws.com/ragflow:$LABEL
+# Tag the image for ECR (FIXED: changed ragflow to ragflow-worker)
+docker tag ragflow-worker:$LABEL 304975023707.dkr.ecr.us-east-1.amazonaws.com/ragflow-worker:$LABEL
 
 # Push the image to ECR
 docker push 304975023707.dkr.ecr.us-east-1.amazonaws.com/ragflow-worker:$LABEL
