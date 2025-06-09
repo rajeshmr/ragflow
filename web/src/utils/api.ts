@@ -1,4 +1,4 @@
-let api_host = `https://6jnsawhzi2.us-east-1.awsapprunner.com/v1`;
+let api_host = `https://mijm9dav2z.us-east-1.awsapprunner.com/v1`;
 
 export { api_host };
 
