@@ -14,17 +14,19 @@
 #  limitations under the License.
 #
 
+from time import sleep
+
 import pytest
 from common import (
-    add_chunk,
+    batch_add_chunks,
+    batch_create_chat_assistants,
     batch_create_datasets,
     bulk_upload_documents,
-    create_chat_assistant,
     delete_chat_assistants,
     delete_datasets,
     delete_session_with_chat_assistants,
-    list_documnets,
-    parse_documnets,
+    list_documents,
+    parse_documents,
 )
 from libs.auth import RAGFlowHttpApiAuth
 from utils import wait_for
@@ -44,43 +46,11 @@ from utils.file_utils import (
 
 @wait_for(30, 1, "Document parsing timeout")
 def condition(_auth, _dataset_id):
-    res = list_documnets(_auth, _dataset_id)
+    res = list_documents(_auth, _dataset_id)
     for doc in res["data"]["docs"]:
         if doc["run"] != "DONE":
             return False
     return True
-
-
-@pytest.fixture(scope="session")
-def api_key(token):
-    return RAGFlowHttpApiAuth(token)
-
-
-@pytest.fixture(scope="function")
-def clear_datasets(request, api_key):
-    def cleanup():
-        delete_datasets(api_key, {"ids": None})
-
-    request.addfinalizer(cleanup)
-
-
-@pytest.fixture(scope="function")
-def clear_chat_assistants(request, api_key):
-    def cleanup():
-        delete_chat_assistants(api_key)
-
-    request.addfinalizer(cleanup)
-
-
-@pytest.fixture(scope="function")
-def clear_session_with_chat_assistants(request, api_key, add_chat_assistants):
-    _, _, chat_assistant_ids = add_chat_assistants
-
-    def cleanup():
-        for chat_assistant_id in chat_assistant_ids:
-            delete_session_with_chat_assistants(api_key, chat_assistant_id)
-
-    request.addfinalizer(cleanup)
 
 
 @pytest.fixture
@@ -110,6 +80,38 @@ def generate_test_files(request, tmp_path):
 def ragflow_tmp_dir(request, tmp_path_factory):
     class_name = request.cls.__name__
     return tmp_path_factory.mktemp(class_name)
+
+
+@pytest.fixture(scope="session")
+def api_key(token):
+    return RAGFlowHttpApiAuth(token)
+
+
+@pytest.fixture(scope="function")
+def clear_datasets(request, api_key):
+    def cleanup():
+        delete_datasets(api_key, {"ids": None})
+
+    request.addfinalizer(cleanup)
+
+
+@pytest.fixture(scope="function")
+def clear_chat_assistants(request, api_key):
+    def cleanup():
+        delete_chat_assistants(api_key)
+
+    request.addfinalizer(cleanup)
+
+
+@pytest.fixture(scope="function")
+def clear_session_with_chat_assistants(request, api_key, add_chat_assistants):
+    def cleanup():
+        for chat_assistant_id in chat_assistant_ids:
+            delete_session_with_chat_assistants(api_key, chat_assistant_id)
+
+    request.addfinalizer(cleanup)
+
+    _, _, chat_assistant_ids = add_chat_assistants
 
 
 @pytest.fixture(scope="class")
@@ -143,18 +145,10 @@ def add_document(api_key, add_dataset, ragflow_tmp_dir):
 @pytest.fixture(scope="class")
 def add_chunks(api_key, add_document):
     dataset_id, document_id = add_document
-    parse_documnets(api_key, dataset_id, {"document_ids": [document_id]})
+    parse_documents(api_key, dataset_id, {"document_ids": [document_id]})
     condition(api_key, dataset_id)
-
-    chunk_ids = []
-    for i in range(4):
-        res = add_chunk(api_key, dataset_id, document_id, {"content": f"chunk test {i}"})
-        chunk_ids.append(res["data"]["chunk"]["id"])
-
-    # issues/6487
-    from time import sleep
-
-    sleep(1)
+    chunk_ids = batch_add_chunks(api_key, dataset_id, document_id, 4)
+    sleep(1)  # issues/6487
     return dataset_id, document_id, chunk_ids
 
 
@@ -166,12 +160,6 @@ def add_chat_assistants(request, api_key, add_document):
     request.addfinalizer(cleanup)
 
     dataset_id, document_id = add_document
-    parse_documnets(api_key, dataset_id, {"document_ids": [document_id]})
+    parse_documents(api_key, dataset_id, {"document_ids": [document_id]})
     condition(api_key, dataset_id)
-
-    chat_assistant_ids = []
-    for i in range(5):
-        res = create_chat_assistant(api_key, {"name": f"test_chat_assistant_{i}", "dataset_ids": [dataset_id]})
-        chat_assistant_ids.append(res["data"]["id"])
-
-    return dataset_id, document_id, chat_assistant_ids
+    return dataset_id, document_id, batch_create_chat_assistants(api_key, 5)
