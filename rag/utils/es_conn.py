@@ -44,12 +44,18 @@ class ESConnection(DocStoreConnection):
         logger.info(f"Use Elasticsearch {settings.ES['hosts']} as the doc engine.")
         for _ in range(ATTEMPT_TIME):
             try:
+                # Determine authentication method: prioritize API key if available, otherwise use basic auth
+                auth_params = {}
+                if "api_key" in settings.ES and settings.ES["api_key"]:
+                    auth_params["api_key"] = settings.ES["api_key"]
+                elif "username" in settings.ES and "password" in settings.ES:
+                    auth_params["basic_auth"] = (settings.ES["username"], settings.ES["password"])
+                
                 self.es = Elasticsearch(
                     settings.ES["hosts"].split(","),
-                    basic_auth=(settings.ES["username"], settings.ES[
-                        "password"]) if "username" in settings.ES and "password" in settings.ES else None,
                     verify_certs=False,
-                    timeout=600
+                    timeout=600,
+                    **auth_params
                 )
                 if self.es:
                     self.info = self.es.info()
