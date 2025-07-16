@@ -71,16 +71,26 @@ class RedisDB:
 
     def __open__(self):
         try:
+            host_config = self.config["host"]
+            if ":" in host_config:
+                host, port = host_config.rsplit(":", 1)
+                port = int(port)
+            else:
+                host = host_config
+                port = 6379
             self.REDIS = redis.StrictRedis(
-                host=self.config["host"].split(":")[0],
-                port=int(self.config.get("host", ":6379").split(":")[1]),
+                host=host,
+                port=port,
                 db=int(self.config.get("db", 1)),
                 password=self.config.get("password"),
                 decode_responses=True,
+                socket_connect_timeout=30,
+                socket_timeout=30,
+                retry_on_timeout=True
             )
             self.register_scripts()
-        except Exception:
-            logging.warning("Redis can't be connected.")
+        except Exception as e:
+            logging.warning(f"Redis can't be connected: {e}")
         return self.REDIS
 
     def health(self):
