@@ -78,20 +78,24 @@ class RedisDB:
             else:
                 host = host_config
                 port = 6379
+                
             self.REDIS = redis.StrictRedis(
                 host=host,
                 port=port,
                 db=int(self.config.get("db", 1)),
-                password=self.config.get("password"),
+                # password=self.config.get("password"),  # Remove this line
                 decode_responses=True,
                 socket_connect_timeout=30,
                 socket_timeout=30,
-                retry_on_timeout=True
+                retry_on_timeout=True,
+                ssl=True,
+                ssl_cert_reqs=None
             )
             self.register_scripts()
         except Exception as e:
             logging.warning(f"Redis can't be connected: {e}")
         return self.REDIS
+
 
     def health(self):
         self.REDIS.ping()
