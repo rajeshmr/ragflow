@@ -82,8 +82,7 @@ class RedisDB:
             self.REDIS = redis.StrictRedis(
                 host=host,
                 port=port,
-                db=int(self.config.get("db", 1)),
-                # password=self.config.get("password"),  # Remove this line
+                db=0,
                 decode_responses=True,
                 socket_connect_timeout=30,
                 socket_timeout=30,
