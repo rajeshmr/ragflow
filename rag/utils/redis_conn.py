@@ -78,41 +78,18 @@ class RedisDB:
             else:
                 host = host_config
                 port = 6379
-            
-            # Check if this is AWS ElastiCache Serverless (cluster mode)
-            is_cluster = "serverless" in host_config or self.config.get("cluster_mode", False)
-            
-            if is_cluster:
-                # Use cluster mode for AWS ElastiCache Serverless
-                from valkey.cluster import ValkeyCluster
-                startup_nodes = [{"host": host, "port": port}]
-                logging.info(f"Connecting to Redis cluster mode: {host}:{port}")
-                self.REDIS = ValkeyCluster(
-                    startup_nodes=startup_nodes,
-                    decode_responses=True,
-                    socket_connect_timeout=30,
-                    socket_timeout=30,
-                    retry_on_timeout=True,
-                    ssl=True,
-                    ssl_cert_reqs=None,
-                    skip_full_coverage_check=True,
-                    max_connections_per_node=True,
-                    readonly_mode=False
-                )
-            else:
-                # Use StrictRedis for standalone mode
-                logging.info(f"Connecting to Redis standalone mode: {host}:{port}")
-                self.REDIS = redis.StrictRedis(
-                    host=host,
-                    port=port,
-                    db=0,
-                    decode_responses=True,
-                    socket_connect_timeout=30,
-                    socket_timeout=30,
-                    retry_on_timeout=True,
-                    ssl=True,
-                    ssl_cert_reqs=None
-                )
+                
+            self.REDIS = redis.StrictRedis(
+                host=host,
+                port=port,
+                db=0,
+                decode_responses=True,
+                socket_connect_timeout=30,
+                socket_timeout=30,
+                retry_on_timeout=True,
+                ssl=True,
+                ssl_cert_reqs=None
+            )
             self.register_scripts()
         except Exception as e:
             logging.warning(f"Redis can't be connected: {e}")
