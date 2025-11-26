@@ -189,6 +189,7 @@ def repair_bad_citation_formats(answer: str, kbinfos: dict, idx: set):
 
 
 def chat(dialog, messages, stream=True, **kwargs):
+    stream = False
     assert messages[-1]["role"] == "user", "The last content of this conversation is not from user."
     if not dialog.kb_ids and not dialog.prompt_config.get("tavily_api_key"):
         for ans in chat_solo(dialog, messages, stream):
@@ -297,7 +298,11 @@ def chat(dialog, messages, stream=True, **kwargs):
                 )
             if prompt_config.get("tavily_api_key"):
                 tav = Tavily(prompt_config["tavily_api_key"])
-                tav_res = tav.retrieve_chunks(" ".join(questions))
+                tav_res = tav.retrieve_chunks(
+                    " ".join(questions),
+                    include_domains=kwargs.get("include_domains"),
+                    exclude_domains=kwargs.get("exclude_domains")
+                )
                 kbinfos["chunks"].extend(tav_res["chunks"])
                 kbinfos["doc_aggs"].extend(tav_res["doc_aggs"])
             if prompt_config.get("use_kg"):
