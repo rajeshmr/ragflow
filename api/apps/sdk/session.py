@@ -253,6 +253,9 @@ def chat_completion_openai_like(tenant_id, chat_id):
     tools = None
     toolcall_session = None
 
+    include_domains = req.get("include_domains")
+    exclude_domains = req.get("exclude_domains")
+
     if req.get("stream", True):
         # The value for the usage field on all chunks except for the last one will be null.
         # The usage field on the last chunk contains token usage statistics for the entire request.
@@ -272,7 +275,7 @@ def chat_completion_openai_like(tenant_id, chat_id):
             }
 
             try:
-                for ans in chat(dia, msg, True, toolcall_session=toolcall_session, tools=tools):
+                for ans in chat(dia, msg, True, toolcall_session=toolcall_session, tools=tools, include_domains=include_domains, exclude_domains=exclude_domains):
                     answer = ans["answer"]
 
                     reasoning_match = re.search(r"<think>(.*?)</think>", answer, flags=re.DOTALL)
@@ -335,7 +338,7 @@ def chat_completion_openai_like(tenant_id, chat_id):
         return resp
     else:
         answer = None
-        for ans in chat(dia, msg, False, toolcall_session=toolcall_session, tools=tools):
+        for ans in chat(dia, msg, False, toolcall_session=toolcall_session, tools=tools, include_domains=include_domains, exclude_domains=exclude_domains):
             # focus answer content only
             answer = ans
             break
