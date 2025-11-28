@@ -37,13 +37,19 @@ RUN python3 -m pip install --upgrade pip tomli
 RUN python3 -m pip install nltk && \
     python3 -m nltk.downloader wordnet punkt_tab
 
+# Generate requirements and exclude mini-racer for separate handling
 RUN python3 -c "import tomli; import sys; \
     deps = tomli.load(open('pyproject.toml', 'rb'))['project']['dependencies']; \
-    # Replace onnxruntime and exclude problematic packages \
-    deps_fixed = [d.replace('onnxruntime-gpu==1.19.2', 'onnxruntime==1.16.3').replace('onnxruntime==1.19.2', 'onnxruntime==1.16.3') for d in deps if not d.startswith('pyicu')]; \
+    # Replace onnxruntime and exclude problematic packages (pyicu, mini-racer) \
+    deps_fixed = [d.replace('onnxruntime-gpu==1.19.2', 'onnxruntime==1.16.3').replace('onnxruntime==1.19.2', 'onnxruntime==1.16.3') for d in deps if not d.startswith('pyicu') and not d.startswith('mini-racer')]; \
     print('\n'.join(deps_fixed))" > requirements.txt && \
     cat requirements.txt && \
     python3 -m pip install -r requirements.txt
+
+# Skip mini-racer installation - it requires building V8 from source which takes 30-90+ minutes
+# mini-racer is only used by akshare for specific encrypted data sources and is not critical
+# If needed in future, consider using a pre-built Docker image with V8 or alternative packages
+RUN echo "Skipping mini-racer installation (requires lengthy V8 compilation)"
 
 # Install xgboost separately (sometimes has conflicts with other packages)
 RUN python3 -m pip install xgboost
