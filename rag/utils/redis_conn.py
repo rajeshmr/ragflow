@@ -212,10 +212,16 @@ class RedisDB:
 
     def transaction(self, key, value, exp=3600):
         try:
-            pipeline = self.REDIS.pipeline(transaction=True)
-            pipeline.set(key, value, exp, nx=True)
-            pipeline.execute()
-            return True
+            # For cluster mode, use simple SET with NX instead of pipeline
+            if hasattr(self.REDIS, 'startup_nodes'):  # Cluster mode detection
+                result = self.REDIS.set(key, value, ex=exp, nx=True)
+                return result is not None
+            else:
+                # Standard mode with pipeline
+                pipeline = self.REDIS.pipeline(transaction=True)
+                pipeline.set(key, value, exp, nx=True)
+                pipeline.execute()
+                return True
         except Exception as e:
             logging.warning(
                 "RedisDB.transaction " + str(key) + " got exception: " + str(e)
@@ -334,7 +340,20 @@ class RedisDB:
         Do follwing atomically:
         Delete a key if its value is equals to the given one, do nothing otherwise.
         """
-        return bool(self.lua_delete_if_equal(keys=[key], args=[expected_value], client=self.REDIS))
+        try:
+            if hasattr(self.REDIS, 'startup_nodes'):  # Cluster mode detection
+                # For cluster mode, use non-atomic approach as fallback
+                current_value = self.REDIS.get(key)
+                if current_value and current_value == expected_value:
+                    self.REDIS.delete(key)
+                    return True
+                return False
+            else:
+                # Standard mode with Lua script
+                return bool(self.lua_delete_if_equal(keys=[key], args=[expected_value], client=self.REDIS))
+        except Exception as e:
+            logging.warning(f"RedisDB.delete_if_equal {key} got exception: {e}")
+            return False
 
     def delete(self, key) -> bool:
         try:
