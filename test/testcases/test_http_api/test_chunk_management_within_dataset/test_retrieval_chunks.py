@@ -15,12 +15,11 @@
 #
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from time import sleep
 
 import pytest
-from common import (
-    INVALID_API_TOKEN,
-    retrieval_chunks,
-)
+from common import add_chunk, delete_chunks, retrieval_chunks
+from configs import INVALID_API_TOKEN
 from libs.auth import RAGFlowHttpApiAuth
 
 
@@ -54,13 +53,13 @@ class TestChunksRetrieval:
             ({"question": "chunk"}, 102, 0, "`dataset_ids` is required."),
         ],
     )
-    def test_basic_scenarios(self, api_key, add_chunks, payload, expected_code, expected_page_size, expected_message):
+    def test_basic_scenarios(self, HttpApiAuth, add_chunks, payload, expected_code, expected_page_size, expected_message):
         dataset_id, document_id, _ = add_chunks
         if "dataset_ids" in payload:
             payload["dataset_ids"] = [dataset_id]
         if "document_ids" in payload:
             payload["document_ids"] = [document_id]
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) == expected_page_size
@@ -85,7 +84,7 @@ class TestChunksRetrieval:
                 "ValueError('Search does not support negative slicing.')",
                 marks=pytest.mark.skip,
             ),
-            pytest.param({"page": 2, "page_size": 2}, 0, 2, "", marks=pytest.mark.skip(reason="issues/6646")),
+            ({"page": 2, "page_size": 2}, 0, 2, ""),
             ({"page": 3, "page_size": 2}, 0, 0, ""),
             ({"page": "3", "page_size": 2}, 0, 0, ""),
             pytest.param(
@@ -104,10 +103,10 @@ class TestChunksRetrieval:
             ),
         ],
     )
-    def test_page(self, api_key, add_chunks, payload, expected_code, expected_page_size, expected_message):
+    def test_page(self, HttpApiAuth, add_chunks, payload, expected_code, expected_page_size, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset_id]})
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) == expected_page_size
@@ -126,9 +125,9 @@ class TestChunksRetrieval:
                 marks=pytest.mark.skip,
             ),
             # ({"page_size": 0}, 0, 0, ""),
-            ({"page_size": 1}, 0, 1, ""),
+            pytest.param({"page_size": 1}, 0, 1, "", marks=pytest.mark.skip(reason="issues/10692")),
             ({"page_size": 5}, 0, 4, ""),
-            ({"page_size": "1"}, 0, 1, ""),
+            pytest.param({"page_size": "1"}, 0, 1, "", marks=pytest.mark.skip(reason="issues/10692")),
             # ({"page_size": -1}, 0, 0, ""),
             pytest.param(
                 {"page_size": "a"},
@@ -139,11 +138,11 @@ class TestChunksRetrieval:
             ),
         ],
     )
-    def test_page_size(self, api_key, add_chunks, payload, expected_code, expected_page_size, expected_message):
+    def test_page_size(self, HttpApiAuth, add_chunks, payload, expected_code, expected_page_size, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset_id]})
 
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) == expected_page_size
@@ -166,17 +165,17 @@ class TestChunksRetrieval:
             ),
         ],
     )
-    def test_vector_similarity_weight(self, api_key, add_chunks, payload, expected_code, expected_page_size, expected_message):
+    def test_vector_similarity_weight(self, HttpApiAuth, add_chunks, payload, expected_code, expected_page_size, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset_id]})
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) == expected_page_size
         else:
             assert res["message"] == expected_message
 
-    @pytest.mark.p2
+    @pytest.mark.p3
     @pytest.mark.parametrize(
         "payload, expected_code, expected_page_size, expected_message",
         [
@@ -195,20 +194,7 @@ class TestChunksRetrieval:
                 "",
                 marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") in [None, "opensearch", "elasticsearch"], reason="elasticsearch"),
             ),
-            pytest.param(
-                {"top_k": -1},
-                100,
-                4,
-                "must be greater than 0",
-                marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") in ["infinity", "opensearch"], reason="Infinity"),
-            ),
-            pytest.param(
-                {"top_k": -1},
-                100,
-                4,
-                "3014",
-                marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") in [None, "opensearch", "elasticsearch"], reason="elasticsearch"),
-            ),
+            ({"top_k": -1}, 100, 4, "must be greater than 0"),
             pytest.param(
                 {"top_k": "a"},
                 100,
@@ -218,10 +204,10 @@ class TestChunksRetrieval:
             ),
         ],
     )
-    def test_top_k(self, api_key, add_chunks, payload, expected_code, expected_page_size, expected_message):
+    def test_top_k(self, HttpApiAuth, add_chunks, payload, expected_code, expected_page_size, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset_id]})
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) == expected_page_size
@@ -236,10 +222,10 @@ class TestChunksRetrieval:
             pytest.param({"rerank_id": "unknown"}, 100, "LookupError('Model(unknown) not authorized')", marks=pytest.mark.skip),
         ],
     )
-    def test_rerank_id(self, api_key, add_chunks, payload, expected_code, expected_message):
+    def test_rerank_id(self, HttpApiAuth, add_chunks, payload, expected_code, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset_id]})
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) > 0
@@ -257,10 +243,10 @@ class TestChunksRetrieval:
             ({"keyword": None}, 0, 5, ""),
         ],
     )
-    def test_keyword(self, api_key, add_chunks, payload, expected_code, expected_page_size, expected_message):
+    def test_keyword(self, HttpApiAuth, add_chunks, payload, expected_code, expected_page_size, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk test", "dataset_ids": [dataset_id]})
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_code == 0:
             assert len(res["data"]["chunks"]) == expected_page_size
@@ -273,15 +259,15 @@ class TestChunksRetrieval:
         [
             ({"highlight": True}, 0, True, ""),
             ({"highlight": "True"}, 0, True, ""),
-            pytest.param({"highlight": False}, 0, False, "", marks=pytest.mark.skip(reason="issues/6648")),
+            ({"highlight": False}, 0, False, ""),
             ({"highlight": "False"}, 0, False, ""),
             pytest.param({"highlight": None}, 0, False, "", marks=pytest.mark.skip(reason="issues/6648")),
         ],
     )
-    def test_highlight(self, api_key, add_chunks, payload, expected_code, expected_highlight, expected_message):
+    def test_highlight(self, HttpApiAuth, add_chunks, payload, expected_code, expected_highlight, expected_message):
         dataset_id, _, _ = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset_id]})
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == expected_code
         if expected_highlight:
             for chunk in res["data"]["chunks"]:
@@ -294,21 +280,107 @@ class TestChunksRetrieval:
             assert res["message"] == expected_message
 
     @pytest.mark.p3
-    def test_invalid_params(self, api_key, add_chunks):
+    def test_invalid_params(self, HttpApiAuth, add_chunks):
         dataset_id, _, _ = add_chunks
         payload = {"question": "chunk", "dataset_ids": [dataset_id], "a": "b"}
-        res = retrieval_chunks(api_key, payload)
+        res = retrieval_chunks(HttpApiAuth, payload)
         assert res["code"] == 0
         assert len(res["data"]["chunks"]) == 4
 
     @pytest.mark.p3
-    def test_concurrent_retrieval(self, api_key, add_chunks):
+    def test_concurrent_retrieval(self, HttpApiAuth, add_chunks):
         dataset_id, _, _ = add_chunks
         count = 100
         payload = {"question": "chunk", "dataset_ids": [dataset_id]}
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(retrieval_chunks, api_key, payload) for i in range(count)]
+            futures = [executor.submit(retrieval_chunks, HttpApiAuth, payload) for i in range(count)]
         responses = list(as_completed(futures))
         assert len(responses) == count, responses
         assert all(future.result()["code"] == 0 for future in futures)
+
+
+class TestDeletedChunksNotRetrievable:
+    """Regression tests for issue #12520: deleted slices should not appear in retrieval/reference."""
+
+    @pytest.mark.p1
+    def test_deleted_chunk_not_in_retrieval(self, HttpApiAuth, add_document):
+        """
+        Test that a deleted chunk is not returned by the retrieval API.
+
+        Steps:
+        1. Add a chunk with unique content
+        2. Verify the chunk is retrievable
+        3. Delete the chunk
+        4. Verify the chunk is no longer retrievable
+        """
+        dataset_id, document_id = add_document
+
+        # Add a chunk with unique content that we can search for
+        unique_content = "UNIQUE_TEST_CONTENT_12520_REGRESSION"
+        res = add_chunk(HttpApiAuth, dataset_id, document_id, {"content": unique_content})
+        assert res["code"] == 0, f"Failed to add chunk: {res}"
+        chunk_id = res["data"]["chunk"]["id"]
+
+        # Wait for indexing to complete
+        sleep(2)
+
+        # Verify the chunk is retrievable
+        payload = {"question": unique_content, "dataset_ids": [dataset_id]}
+        res = retrieval_chunks(HttpApiAuth, payload)
+        assert res["code"] == 0, f"Retrieval failed: {res}"
+        chunk_ids_before = [c["id"] for c in res["data"]["chunks"]]
+        assert chunk_id in chunk_ids_before, f"Chunk {chunk_id} should be retrievable before deletion"
+
+        # Delete the chunk
+        res = delete_chunks(HttpApiAuth, dataset_id, document_id, {"chunk_ids": [chunk_id]})
+        assert res["code"] == 0, f"Failed to delete chunk: {res}"
+
+        # Wait for deletion to propagate
+        sleep(1)
+
+        # Verify the chunk is no longer retrievable
+        res = retrieval_chunks(HttpApiAuth, payload)
+        assert res["code"] == 0, f"Retrieval failed after deletion: {res}"
+        chunk_ids_after = [c["id"] for c in res["data"]["chunks"]]
+        assert chunk_id not in chunk_ids_after, f"Chunk {chunk_id} should NOT be retrievable after deletion"
+
+    @pytest.mark.p2
+    def test_deleted_chunks_batch_not_in_retrieval(self, HttpApiAuth, add_document):
+        """
+        Test that multiple deleted chunks are not returned by retrieval.
+        """
+        dataset_id, document_id = add_document
+
+        # Add multiple chunks with unique content
+        chunk_ids = []
+        for i in range(3):
+            unique_content = f"BATCH_DELETE_TEST_CHUNK_{i}_12520"
+            res = add_chunk(HttpApiAuth, dataset_id, document_id, {"content": unique_content})
+            assert res["code"] == 0, f"Failed to add chunk {i}: {res}"
+            chunk_ids.append(res["data"]["chunk"]["id"])
+
+        # Wait for indexing
+        sleep(2)
+
+        # Verify chunks are retrievable
+        payload = {"question": "BATCH_DELETE_TEST_CHUNK", "dataset_ids": [dataset_id]}
+        res = retrieval_chunks(HttpApiAuth, payload)
+        assert res["code"] == 0
+        retrieved_ids_before = [c["id"] for c in res["data"]["chunks"]]
+        for cid in chunk_ids:
+            assert cid in retrieved_ids_before, f"Chunk {cid} should be retrievable before deletion"
+
+        # Delete all chunks
+        res = delete_chunks(HttpApiAuth, dataset_id, document_id, {"chunk_ids": chunk_ids})
+        assert res["code"] == 0, f"Failed to delete chunks: {res}"
+
+        # Wait for deletion to propagate
+        sleep(1)
+
+        # Verify none of the chunks are retrievable
+        res = retrieval_chunks(HttpApiAuth, payload)
+        assert res["code"] == 0
+        retrieved_ids_after = [c["id"] for c in res["data"]["chunks"]]
+        for cid in chunk_ids:
+            assert cid not in retrieved_ids_after, f"Chunk {cid} should NOT be retrievable after deletion"

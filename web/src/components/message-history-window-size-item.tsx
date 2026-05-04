@@ -1,7 +1,6 @@
-import { Form, InputNumber } from 'antd';
-import { useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
+import NumberInput from './originui/number-input';
 import {
   FormControl,
   FormField,
@@ -9,42 +8,15 @@ import {
   FormLabel,
   FormMessage,
 } from './ui/form';
-import { BlurInput, Input } from './ui/input';
-
-const MessageHistoryWindowSizeItem = ({
-  initialValue,
-}: {
-  initialValue: number;
-}) => {
-  const { t } = useTranslation();
-
-  return (
-    <Form.Item
-      name={'message_history_window_size'}
-      label={t('flow.messageHistoryWindowSize')}
-      initialValue={initialValue}
-      tooltip={t('flow.messageHistoryWindowSizeTip')}
-    >
-      <InputNumber style={{ width: '100%' }} />
-    </Form.Item>
-  );
-};
-
-export default MessageHistoryWindowSizeItem;
 
 type MessageHistoryWindowSizeFormFieldProps = {
-  useBlurInput?: boolean;
+  min?: number;
 };
-
 export function MessageHistoryWindowSizeFormField({
-  useBlurInput = false,
+  min,
 }: MessageHistoryWindowSizeFormFieldProps) {
   const form = useFormContext();
   const { t } = useTranslation();
-
-  const NextInput = useMemo(() => {
-    return useBlurInput ? BlurInput : Input;
-  }, [useBlurInput]);
 
   return (
     <FormField
@@ -56,7 +28,7 @@ export function MessageHistoryWindowSizeFormField({
             {t('flow.messageHistoryWindowSize')}
           </FormLabel>
           <FormControl>
-            <NextInput {...field} type={'number'}></NextInput>
+            <NumberInput {...field} min={min} className="w-full"></NumberInput>
           </FormControl>
           <FormMessage />
         </FormItem>

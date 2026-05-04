@@ -1,22 +1,19 @@
-import { PageHeader } from '@/components/page-header';
-import { useNavigatePage } from '@/hooks/logic-hooks/navigate-hooks';
-import { Outlet } from 'umi';
+import { useFetchKnowledgeBaseConfiguration } from '@/hooks/use-knowledge-request';
+import { KnowledgeBaseProvider } from '@/pages/dataset/contexts/knowledge-base-context';
+
+import { Outlet } from 'react-router';
 import { SideBar } from './sidebar';
 
 export default function DatasetWrapper() {
-  const { navigateToDatasetList } = useNavigatePage();
+  const { data, loading } = useFetchKnowledgeBaseConfiguration();
+
   return (
-    <section>
-      <PageHeader
-        title="Dataset details"
-        back={navigateToDatasetList}
-      ></PageHeader>
-      <div className="flex flex-1">
-        <SideBar></SideBar>
-        <div className="flex-1">
-          <Outlet />
-        </div>
-      </div>
-    </section>
+    <KnowledgeBaseProvider knowledgeBase={data} loading={loading}>
+      <article className="pt-3 size-full grid grid-cols-[auto_1fr] grid-rows-1">
+        <SideBar dataset={data} />
+
+        <Outlet />
+      </article>
+    </KnowledgeBaseProvider>
   );
 }

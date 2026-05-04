@@ -11,7 +11,7 @@ import { IDocumentInfo } from '@/interfaces/database/document';
 import { formatFileSize } from '@/utils/common-util';
 import { formatDate } from '@/utils/date';
 import { downloadDocument } from '@/utils/file-util';
-import { ArrowDownToLine, FolderPen, ScrollText, Trash2 } from 'lucide-react';
+import { Download, Eye, PenLine, Trash2 } from 'lucide-react';
 import { useCallback } from 'react';
 import { UseRenameDocumentShowType } from './use-rename-document';
 import { isParserRunning } from './utils';
@@ -50,19 +50,23 @@ export function DatasetActionCell({
   }, [record, showRenameModal]);
 
   return (
-    <section className="flex gap-4 items-center text-text-sub-title-invert">
+    <div
+      className="
+      flex gap-2 items-center opacity-0
+      transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+    >
       <Button
-        variant={'ghost'}
-        size={'sm'}
+        size="icon-xs"
+        variant="ghost"
         disabled={isRunning}
         onClick={handleRename}
       >
-        <FolderPen />
+        <PenLine className="size-[1em]" />
       </Button>
       <HoverCard>
         <HoverCardTrigger>
-          <Button variant="ghost" disabled={isRunning} size={'sm'}>
-            <ScrollText />
+          <Button size="icon-xs" variant="ghost" disabled={isRunning}>
+            <Eye className="size-[1em]" />
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-[40vw] max-h-[40vh] overflow-auto">
@@ -88,19 +92,24 @@ export function DatasetActionCell({
 
       {isVirtualDocument || (
         <Button
-          variant={'ghost'}
+          size="icon-xs"
+          variant="ghost"
           onClick={onDownloadDocument}
           disabled={isRunning}
-          size={'sm'}
         >
-          <ArrowDownToLine />
+          <Download className="size-[1em]" />
         </Button>
       )}
       <ConfirmDeleteDialog onOk={handleRemove}>
-        <Button variant={'ghost'} size={'sm'} disabled={isRunning}>
-          <Trash2 />
+        <Button
+          data-testid="document-delete"
+          size="icon-xs"
+          variant="ghost"
+          disabled={isRunning}
+        >
+          <Trash2 className="size-[1em]" />
         </Button>
       </ConfirmDeleteDialog>
-    </section>
+    </div>
   );
 }

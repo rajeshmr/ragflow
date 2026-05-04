@@ -1,7 +1,15 @@
-import { FormContainer } from '@/components/form-container';
+import { Collapse } from '@/components/collapse';
+import { CrossLanguageFormField } from '@/components/cross-language-form-field';
 import { KnowledgeBaseFormField } from '@/components/knowledge-base-item';
+import { MemoriesFormField } from '@/components/memories-form-field';
+import {
+  MetadataFilter,
+  MetadataFilterSchema,
+} from '@/components/metadata-filter';
+import { RAGFlowFormItem } from '@/components/ragflow-form';
 import { RerankFormFields } from '@/components/rerank';
 import { SimilaritySliderFormField } from '@/components/similarity-slider';
+import { TOCEnhanceFormField } from '@/components/toc-enhance-form-field';
 import { TopNFormField } from '@/components/top-n-item';
 import {
   Form,
@@ -11,31 +19,120 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { Radio } from '@/components/ui/radio';
 import { Textarea } from '@/components/ui/textarea';
+import { UseKnowledgeGraphFormField } from '@/components/use-knowledge-graph-item';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMemo } from 'react';
-import { useForm } from 'react-hook-form';
+import { memo, useMemo } from 'react';
+import {
+  UseFormReturn,
+  useForm,
+  useFormContext,
+  useWatch,
+} from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
-import { initialRetrievalValues } from '../../constant';
+import { RetrievalFrom, initialRetrievalValues } from '../../constant';
 import { useWatchFormChange } from '../../hooks/use-watch-form-change';
 import { INextOperatorForm } from '../../interface';
+import { FormWrapper } from '../components/form-wrapper';
 import { Output } from '../components/output';
-import { QueryVariable } from '../components/query-variable';
+import { PromptEditor } from '../components/prompt-editor';
+import { UserIdFormField } from '../components/user-id-form-field';
 import { useValues } from './use-values';
 
-const FormSchema = z.object({
-  query: z.string().optional(),
+export const RetrievalPartialSchema = {
   similarity_threshold: z.coerce.number(),
   keywords_similarity_weight: z.coerce.number(),
   top_n: z.coerce.number(),
   top_k: z.coerce.number(),
-  kb_ids: z.array(z.string()),
+  dataset_ids: z.array(z.string()),
   rerank_id: z.string(),
   empty_response: z.string(),
+  cross_languages: z.array(z.string()),
+  use_kg: z.boolean(),
+  toc_enhance: z.boolean(),
+  ...MetadataFilterSchema,
+  memory_ids: z.array(z.string()).optional(),
+  retrieval_from: z.string(),
+  user_id: z.string().optional(),
+};
+
+export const FormSchema = z.object({
+  query: z.string().optional(),
+  ...RetrievalPartialSchema,
 });
 
-const RetrievalForm = ({ node }: INextOperatorForm) => {
+export type RetrievalFormSchemaType = z.infer<typeof FormSchema>;
+
+export function MemoryDatasetForm() {
+  const { t } = useTranslation();
+  const form = useFormContext();
+  const retrievalFrom = useWatch({
+    control: form.control,
+    name: 'retrieval_from',
+  });
+
+  return (
+    <>
+      <RAGFlowFormItem name="retrieval_from" label={t('flow.retrievalFrom')}>
+        <Radio.Group>
+          <Radio value={RetrievalFrom.Dataset}>
+            {t('knowledgeDetails.dataset')}
+          </Radio>
+          <Radio value={RetrievalFrom.Memory}>{t('header.memories')}</Radio>
+        </Radio.Group>
+      </RAGFlowFormItem>
+      {retrievalFrom === RetrievalFrom.Memory ? (
+        <>
+          <MemoriesFormField label={t('header.memories')}></MemoriesFormField>
+          <UserIdFormField></UserIdFormField>
+        </>
+      ) : (
+        <KnowledgeBaseFormField showVariable></KnowledgeBaseFormField>
+      )}
+    </>
+  );
+}
+
+export function useHideKnowledgeGraphField(form: UseFormReturn<any>) {
+  const retrievalFrom = useWatch({
+    control: form.control,
+    name: 'retrieval_from',
+  });
+
+  return retrievalFrom === RetrievalFrom.Memory;
+}
+
+export function EmptyResponseField() {
+  const { t } = useTranslation();
+  const form = useFormContext();
+
+  return (
+    <FormField
+      control={form.control}
+      name="empty_response"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel tooltip={t('chat.emptyResponseTip')}>
+            {t('chat.emptyResponse')}
+          </FormLabel>
+          <FormControl>
+            <Textarea
+              placeholder={t('common.namePlaceholder')}
+              {...field}
+              autoComplete="off"
+              rows={4}
+            />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+}
+
+function RetrievalForm({ node }: INextOperatorForm) {
   const { t } = useTranslation();
 
   const outputList = useMemo(() => {
@@ -43,6 +140,10 @@ const RetrievalForm = ({ node }: INextOperatorForm) => {
       {
         title: 'formalized_content',
         type: initialRetrievalValues.outputs.formalized_content.type,
+      },
+      {
+        title: 'json',
+        type: initialRetrievalValues.outputs.json.type,
       },
     ];
   }, []);
@@ -54,51 +155,44 @@ const RetrievalForm = ({ node }: INextOperatorForm) => {
     resolver: zodResolver(FormSchema),
   });
 
+  const hideKnowledgeGraphField = useHideKnowledgeGraphField(form);
+
   useWatchFormChange(node?.id, form);
 
   return (
     <Form {...form}>
-      <form
-        className="space-y-6 p-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-        }}
-      >
-        <FormContainer>
-          <QueryVariable></QueryVariable>
-          <KnowledgeBaseFormField></KnowledgeBaseFormField>
-        </FormContainer>
-        <FormContainer>
-          <SimilaritySliderFormField
-            vectorSimilarityWeightName="keywords_similarity_weight"
-            isTooltipShown
-          ></SimilaritySliderFormField>
-          <TopNFormField></TopNFormField>
-          <RerankFormFields></RerankFormFields>
-
-          <FormField
-            control={form.control}
-            name="empty_response"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('chat.emptyResponse')}</FormLabel>
-                <FormControl>
-                  <Textarea
-                    placeholder={t('common.namePlaceholder')}
-                    {...field}
-                    autoComplete="off"
-                    rows={4}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+      <FormWrapper>
+        <RAGFlowFormItem name="query" label={t('flow.query')}>
+          <PromptEditor></PromptEditor>
+        </RAGFlowFormItem>
+        <MemoryDatasetForm></MemoryDatasetForm>
+        <Collapse title={<div>{t('flow.advancedSettings')}</div>}>
+          <section className="space-y-5">
+            <SimilaritySliderFormField
+              vectorSimilarityWeightName="keywords_similarity_weight"
+              isTooltipShown
+            ></SimilaritySliderFormField>
+            <TopNFormField></TopNFormField>
+            {hideKnowledgeGraphField || (
+              <>
+                <RerankFormFields></RerankFormFields>
+                <MetadataFilter canReference></MetadataFilter>
+              </>
             )}
-          />
-        </FormContainer>
+            <EmptyResponseField></EmptyResponseField>
+            {hideKnowledgeGraphField || (
+              <>
+                <CrossLanguageFormField name="cross_languages"></CrossLanguageFormField>
+                <UseKnowledgeGraphFormField name="use_kg"></UseKnowledgeGraphFormField>
+                <TOCEnhanceFormField name="toc_enhance"></TOCEnhanceFormField>
+              </>
+            )}
+          </section>
+        </Collapse>
         <Output list={outputList}></Output>
-      </form>
+      </FormWrapper>
     </Form>
   );
-};
+}
 
-export default RetrievalForm;
+export default memo(RetrievalForm);

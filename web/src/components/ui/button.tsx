@@ -3,32 +3,113 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
-import { Loader2, Plus } from 'lucide-react';
+import { LucideLoader2, Plus } from 'lucide-react';
+import { Link, LinkProps } from 'react-router';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  cn(
+    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm transition-colors outline-0',
+    'disabled:pointer-events-none disabled:opacity-50 rounded border-0.5 border-transparent',
+    '[&_svg]:pointer-events-none [&_svg:not([class*="size-"])]:size-4 shrink-0 [&_svg]:shrink-0',
+  ),
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-primary/90',
-        destructive:
-          'bg-destructive text-destructive-foreground hover:bg-destructive/90',
-        outline:
-          'border border-text-sub-title-invert bg-transparent hover:bg-accent hover:text-accent-foreground',
-        secondary:
-          'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-        ghost: 'hover:bg-accent hover:text-accent-foreground',
+        // Solid variant series:
+        // Button has its own background color, may have borders
+        default:
+          'bg-text-primary text-bg-base shadow-xs hover:bg-text-primary/90 focus-visible:bg-text-primary/90',
+
+        secondary: `
+          bg-bg-card
+          hover:text-text-primary hover:bg-border-button
+          focus-visible:text-text-primary focus-visible:bg-border-button
+        `,
+
+        highlighted: `
+          bg-text-primary text-bg-base border-b-4 border-b-accent-primary
+          hover:bg-text-primary/90 focus-visible:bg-text-primary/90
+        `,
+
+        accent: `
+          bg-accent-primary text-white
+          hover:bg-accent-primary/90 focus-visible:bg-accent-primary/90
+        `,
+
+        destructive: `
+          bg-state-error text-white shadow-xs
+          hover:bg-state-error/90 focus-visible:ring-state-error/20 dark:focus-visible:ring-state-error/40
+        `,
+
+        // Outline variant series
+        // Button has transparent or greyish background, may have borders
+        outline: `
+          text-text-secondary bg-bg-input border-0.5 border-border-button
+          hover:text-text-primary hover:bg-border-button hover:border-border-default
+          focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:border-border-button
+        `, // light: bg=transparent, dark: bg-input
+
+        dashed: `
+          text-text-secondary border-border-button border-dashed
+          hover:text-text-primary hover:bg-border-button hover:border-border-default
+          focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:border-border-button
+        `,
+
+        icon: 'bg-transparent text-foreground hover:bg-transparent/80',
+
+        transparent: `
+          text-text-secondary bg-transparent border-0.5 border-border-button
+          hover:text-text-primary hover:bg-border-button
+          focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:border-border-button
+        `,
+
+        danger: `
+          bg-transparent border border-state-error text-state-error
+          hover:bg-state-error/10 focus-visible:bg-state-error/10
+        `,
+
+        'danger-hover': `
+          bg-bg-input border-border-button
+          hover:bg-state-error/10 focus-visible:bg-state-error/10
+          hover:text-state-error focus-visible:text-state-error
+          hover:border-state-error focus-visible:border-state-error
+        `,
+
+        // Ghost variant series
+        // Button has transparent background, without borders
+        ghost: `
+          text-text-secondary
+          hover:bg-border-button focus-visible:bg-border-button
+          hover:text-text-primary focus-visible:text-text-primary
+        `,
+
+        delete: `
+          text-text-secondary
+          hover:bg-state-error-5 hover:text-state-error
+          focus-visible:text-state-error focus-visible:bg-state-error-5
+        `,
+
         link: 'text-primary underline-offset-4 hover:underline',
-        tertiary:
-          'bg-colors-background-sentiment-solid-primary text-colors-text-persist-light hover:bg-colors-background-sentiment-solid-primary/80',
-        icon: 'bg-colors-background-inverse-standard text-foreground hover:bg-colors-background-inverse-standard/80',
+
+        // Static
+        // Button has no interaction transitions
+        static:
+          'text-text-secondary hover:text-text-primary focus-visible:text-text-primary',
       },
       size: {
-        default: 'h-8 px-2.5 py-1.5 ',
-        sm: 'h-6 rounded-sm px-2',
-        lg: 'h-11 rounded-md px-8',
-        icon: 'h-10 w-10',
-        auto: 'h-full px-1',
+        auto: '',
+
+        xl: 'h-12 rounded-xl px-5 gap-3',
+        lg: 'h-10 rounded-lg px-4',
+        default: 'h-8 rounded px-3',
+        sm: 'h-7 rounded-sm px-2 gap-1',
+        xs: 'h-6 rounded-xs px-1 gap-0.5',
+
+        'icon-xl': 'size-12 rounded-xl',
+        'icon-lg': 'size-10 rounded-lg',
+        icon: 'size-8 rounded',
+        'icon-sm': 'size-7 rounded-sm',
+        'icon-xs': 'size-6 rounded-xs',
       },
     },
     defaultVariants: {
@@ -38,64 +119,75 @@ const buttonVariants = cva(
   },
 );
 
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+export type ButtonVariants = VariantProps<typeof buttonVariants>;
+
+export type ButtonProps<IsAnchor extends boolean = false> = {
   asChild?: boolean;
-}
+  asLink?: boolean;
+  loading?: boolean;
+  block?: boolean;
+  disabled?: boolean;
+  dot?: boolean;
+} & ButtonVariants &
+  (IsAnchor extends true
+    ? LinkProps
+    : React.ButtonHTMLAttributes<HTMLButtonElement>);
 
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : 'button';
-    return (
-      <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
-        {...props}
-      />
-    );
-  },
-);
-Button.displayName = 'Button';
-
-export const ButtonLoading = React.forwardRef<
-  HTMLButtonElement,
-  ButtonProps & { loading?: boolean }
->(
-  (
+const Button = React.forwardRef(
+  <IsAnchor extends boolean = false>(
     {
+      children,
       className,
       variant,
       size,
+      dot = false,
       asChild = false,
-      children,
+      asLink = false,
       loading = false,
-      disabled,
+      disabled = false,
+      block = false,
       ...props
-    },
-    ref,
+    }: ButtonProps<IsAnchor>,
+    ref: React.ForwardedRef<
+      IsAnchor extends true ? HTMLAnchorElement : HTMLButtonElement
+    >,
   ) => {
-    const Comp = asChild ? Slot : 'button';
+    const Comp = asChild ? Slot : asLink ? Link : 'button';
+
     return (
       <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
-        {...props}
+        className={cn(
+          buttonVariants({ variant, size, className }),
+          { 'w-full': block },
+          { relative: dot },
+        )}
+        // @ts-ignore
+        ref={ref as React.RefObject<HTMLButtonElement | HTMLAnchorElement>}
         disabled={loading || disabled}
+        {...props}
       >
-        {loading && <Loader2 className="animate-spin" />}
-        {children}
+        <>
+          {dot && (
+            <span className="absolute size-[6px] rounded-full -right-[3px] -top-[3px] bg-state-error animate" />
+          )}
+          {loading && <LucideLoader2 className="animate-spin" />}
+          {children}
+        </>
       </Comp>
     );
   },
 );
+
+Button.displayName = 'Button';
+
+export const ButtonLoading = Button;
 
 ButtonLoading.displayName = 'ButtonLoading';
 
 export { Button, buttonVariants };
 
 export const BlockButton = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ children, className, ...props }, ref) => {
+  function BlockButton({ children, className, ...props }, ref) {
     return (
       <Button
         variant={'outline'}

@@ -1,5 +1,9 @@
+import { UploadFormSchemaType } from '@/components/file-upload-dialog';
 import { useSetModalState } from '@/hooks/common-hooks';
-import { useUploadNextDocument } from '@/hooks/use-document-request';
+import {
+  useRunDocument,
+  useUploadNextDocument,
+} from '@/hooks/use-document-request';
 import { getUnSupportedFilesCount } from '@/utils/document-util';
 import { useCallback } from 'react';
 
@@ -10,28 +14,45 @@ export const useHandleUploadDocument = () => {
     showModal: showDocumentUploadModal,
   } = useSetModalState();
   const { uploadDocument, loading } = useUploadNextDocument();
+  const { runDocumentByIds } = useRunDocument();
 
   const onDocumentUploadOk = useCallback(
-    async (fileList: File[]): Promise<number | undefined> => {
+    async ({ fileList, parseOnCreation }: UploadFormSchemaType) => {
       if (fileList.length > 0) {
-        const ret: any = await uploadDocument(fileList);
-        if (typeof ret?.message !== 'string') {
+        const ret = await uploadDocument(fileList);
+
+        // Check for success (code === 0) or partial success (code === 500 with some files)
+        const isSuccess = ret?.code === 0;
+        const isPartialSuccess = ret?.code === 500 && ret?.message;
+
+        if (!isSuccess && !isPartialSuccess) {
           return;
         }
-        const count = getUnSupportedFilesCount(ret?.message);
-        /// 500 error code indicates that some file types are not supported
-        let code = ret?.code;
-        if (
-          ret?.code === 0 ||
-          (ret?.code === 500 && count !== fileList.length) // Some files were not uploaded successfully, but some were uploaded successfully.
-        ) {
-          code = 0;
-          hideDocumentUploadModal();
+
+        if (isSuccess && parseOnCreation) {
+          runDocumentByIds({
+            documentIds: ret.data.map((x: any) => x.id),
+            run: 1,
+            shouldDelete: false,
+          });
         }
-        return code;
+
+        if (isSuccess) {
+          hideDocumentUploadModal();
+          return 0;
+        }
+
+        // For partial success (code 500), check if any files were uploaded
+        const count = getUnSupportedFilesCount(ret?.message);
+        if (count !== fileList.length) {
+          hideDocumentUploadModal();
+          return 0;
+        }
+
+        return ret?.code;
       }
     },
-    [uploadDocument, hideDocumentUploadModal],
+    [uploadDocument, runDocumentByIds, hideDocumentUploadModal],
   );
 
   return {

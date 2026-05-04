@@ -8,12 +8,38 @@ export enum KnowledgeRouteKey {
 export const DatasetBaseKey = 'dataset';
 
 export enum RunningStatus {
+  UNSTART = 'UNSTART', // need to run
+  RUNNING = 'RUNNING', // need to cancel
+  CANCEL = 'CANCEL', // need to refresh
+  DONE = 'DONE', // need to refresh
+  FAIL = 'FAIL', // need to refresh
+  SCHEDULE = 'SCHEDULE',
+}
+
+export enum RunningStatusOld {
   UNSTART = '0', // need to run
   RUNNING = '1', // need to cancel
   CANCEL = '2', // need to refresh
   DONE = '3', // need to refresh
   FAIL = '4', // need to refresh
+  SCHEDULE = '5',
 }
+
+export const RunningStatusMap = {
+  [RunningStatus.UNSTART]: 'Pending',
+  [RunningStatus.RUNNING]: 'Running',
+  [RunningStatus.CANCEL]: 'Cancel',
+  [RunningStatus.DONE]: 'Success',
+  [RunningStatus.FAIL]: 'Failed',
+  [RunningStatus.SCHEDULE]: 'Schedule',
+
+  [RunningStatusOld.UNSTART]: 'Pending',
+  [RunningStatusOld.RUNNING]: 'Running',
+  [RunningStatusOld.CANCEL]: 'Cancel',
+  [RunningStatusOld.DONE]: 'Success',
+  [RunningStatusOld.FAIL]: 'Failed',
+  [RunningStatusOld.SCHEDULE]: 'Schedule',
+};
 
 export enum ModelVariableType {
   Improvise = 'Improvise',
@@ -23,25 +49,25 @@ export enum ModelVariableType {
 
 export const settledModelVariableMap = {
   [ModelVariableType.Improvise]: {
-    temperature: 0.9,
+    temperature: 0.8,
     top_p: 0.9,
-    frequency_penalty: 0.2,
-    presence_penalty: 0.4,
-    max_tokens: 512,
+    frequency_penalty: 0.1,
+    presence_penalty: 0.1,
+    max_tokens: 4096,
   },
   [ModelVariableType.Precise]: {
-    temperature: 0.1,
-    top_p: 0.3,
-    frequency_penalty: 0.7,
-    presence_penalty: 0.4,
-    max_tokens: 512,
+    temperature: 0.2,
+    top_p: 0.75,
+    frequency_penalty: 0.5,
+    presence_penalty: 0.5,
+    max_tokens: 4096,
   },
   [ModelVariableType.Balance]: {
     temperature: 0.5,
-    top_p: 0.5,
-    frequency_penalty: 0.7,
-    presence_penalty: 0.4,
-    max_tokens: 512,
+    top_p: 0.85,
+    frequency_penalty: 0.3,
+    presence_penalty: 0.2,
+    max_tokens: 4096,
   },
 };
 
@@ -52,11 +78,13 @@ export enum LlmModelType {
   Speech2text = 'speech2text',
   Rerank = 'rerank',
   TTS = 'tts',
+  Ocr = 'ocr',
 }
 
 export enum KnowledgeSearchParams {
   DocumentId = 'doc_id',
   KnowledgeId = 'id',
+  Type = 'type',
 }
 
 export enum DocumentType {
@@ -80,4 +108,11 @@ export enum DocumentParserType {
   Email = 'email',
   Tag = 'tag',
   KnowledgeGraph = 'knowledge_graph',
+}
+
+export const TagRenameId = 'tagRename';
+
+export enum ParseType {
+  BuiltIn = 1,
+  Pipeline = 2,
 }

@@ -16,8 +16,10 @@
 
 
 import pytest
-from common import DOCUMENT_NAME_LIMIT, INVALID_API_TOKEN, list_documents, update_document
+from common import list_documents, update_document
+from configs import DOCUMENT_NAME_LIMIT, INVALID_API_TOKEN, INVALID_ID_32
 from libs.auth import RAGFlowHttpApiAuth
+from configs import DEFAULT_PARSER_CONFIG
 
 
 @pytest.mark.p1
@@ -25,11 +27,11 @@ class TestAuthorization:
     @pytest.mark.parametrize(
         "invalid_auth, expected_code, expected_message",
         [
-            (None, 0, "`Authorization` can't be empty"),
+            (None, 401, "<Unauthorized '401: Unauthorized'>"),
             (
                 RAGFlowHttpApiAuth(INVALID_API_TOKEN),
-                109,
-                "Authentication error: API key is invalid!",
+                401,
+                "<Unauthorized '401: Unauthorized'>",
             ),
         ],
     )
@@ -40,25 +42,26 @@ class TestAuthorization:
 
 
 class TestDocumentsUpdated:
-    @pytest.mark.p1
+    # GET /api/v1/datasets/<dataset_id>/documents no longer support find by id/name
+    @pytest.mark.p3
     @pytest.mark.parametrize(
         "name, expected_code, expected_message",
         [
             ("new_name.txt", 0, ""),
             (
-                f"{'a' * (DOCUMENT_NAME_LIMIT - 3)}.txt",
-                101,
-                "The name should be less than 128 bytes.",
+                f"{'a' * (DOCUMENT_NAME_LIMIT - 4)}.txt",
+                0,
+                "",
             ),
             (
                 0,
-                100,
-                """AttributeError("\'int\' object has no attribute \'encode\'")""",
+                102,
+                "Field: <name> - Message: <Input should be a valid string> - Value: <0>",
             ),
             (
                 None,
                 100,
-                """AttributeError("\'NoneType\' object has no attribute \'encode\'")""",
+                "AttributeError('NoneType' object has no attribute 'encode')",
             ),
             (
                 "",
@@ -82,65 +85,97 @@ class TestDocumentsUpdated:
             ),
         ],
     )
-    def test_name(self, api_key, add_documents, name, expected_code, expected_message):
+    def test_name(self, HttpApiAuth, add_documents, name, expected_code, expected_message):
         dataset_id, document_ids = add_documents
-        res = update_document(api_key, dataset_id, document_ids[0], {"name": name})
+        res = update_document(HttpApiAuth, dataset_id, document_ids[0], {"name": name})
         assert res["code"] == expected_code
         if expected_code == 0:
-            res = list_documents(api_key, dataset_id, {"id": document_ids[0]})
+            res = list_documents(HttpApiAuth, dataset_id, {"id": document_ids[0]})
             assert res["data"]["docs"][0]["name"] == name
         else:
             assert res["message"] == expected_message
 
+    # GET /api/v1/datasets/<dataset_id>/documents no longer support find by id/name
     @pytest.mark.p3
     @pytest.mark.parametrize(
         "document_id, expected_code, expected_message",
         [
-            ("", 100, "<MethodNotAllowed '405: Method Not Allowed'>"),
             (
-                "invalid_document_id",
+                INVALID_ID_32,
                 102,
                 "The dataset doesn't own the document.",
             ),
         ],
     )
-    def test_invalid_document_id(self, api_key, add_documents, document_id, expected_code, expected_message):
+    def test_invalid_document_id(self, HttpApiAuth, add_documents, document_id, expected_code, expected_message):
         dataset_id, _ = add_documents
-        res = update_document(api_key, dataset_id, document_id, {"name": "new_name.txt"})
+        res = update_document(HttpApiAuth, dataset_id, document_id, {"name": "new_name.txt"})
         assert res["code"] == expected_code
         assert res["message"] == expected_message
 
-    @pytest.mark.p3
+    @pytest.mark.p2
     @pytest.mark.parametrize(
         "dataset_id, expected_code, expected_message",
         [
-            ("", 100, "<NotFound '404: Not Found'>"),
             (
-                "invalid_dataset_id",
+                INVALID_ID_32,
                 102,
                 "You don't own the dataset.",
             ),
         ],
     )
-    def test_invalid_dataset_id(self, api_key, add_documents, dataset_id, expected_code, expected_message):
+    def test_invalid_dataset_id(self, HttpApiAuth, add_documents, dataset_id, expected_code, expected_message):
         _, document_ids = add_documents
-        res = update_document(api_key, dataset_id, document_ids[0], {"name": "new_name.txt"})
+        res = update_document(HttpApiAuth, dataset_id, document_ids[0], {"name": "new_name.txt"})
         assert res["code"] == expected_code
         assert res["message"] == expected_message
 
-    @pytest.mark.p3
+    @pytest.mark.p2
     @pytest.mark.parametrize(
         "meta_fields, expected_code, expected_message",
-        [({"test": "test"}, 0, ""), ("test", 102, "meta_fields must be a dictionary")],
+        [
+            # Valid meta_fields
+            ({"test": "test"}, 0, ""),
+            # Valid meta_fields with various types
+            ({"author": "alice", "year": 2024}, 0, ""),
+            ({"tags": ["tag1", "tag2"]}, 0, ""),
+            ({"count": 42, "price": 19.99}, 0, ""),
+            # Invalid type - string instead of dict
+            ("test", 102, "Field: <meta_fields> - Message: <Input should be a valid dictionary> - Value: <test>"),
+            # Invalid type - list instead of dict
+            ([], 102, "Field: <meta_fields> - Message: <Input should be a valid dictionary> - Value: <[]>"),
+            # Invalid - list containing objects (unsupported type in list)
+            ({"tags": [{"x": {"a": "b"}}]}, 102, "Field: <meta_fields> - Message: <The type is not supported in list: [{'x': {'a': 'b'}}]> - Value: <{'tags': [{'x': {'a': 'b'}}]}>"),
+            ({"tags": [{"x": 1}]}, 102, "Field: <meta_fields> - Message: <The type is not supported in list: [{'x': 1}]> - Value: <{'tags': [{'x': 1}]}>"),
+            # Invalid - nested object with unsupported type
+            ({"obj": {"x": 1}}, 102, "Field: <meta_fields> - Message: <The type is not supported: {'x': 1}> - Value: <{'obj': {'x': 1}}>"),
+            # Valid types of list
+            ({"tags": [2, 1]}, 0, ""),
+        ],
     )
-    def test_meta_fields(self, api_key, add_documents, meta_fields, expected_code, expected_message):
+    def test_meta_fields(self, HttpApiAuth, add_documents, meta_fields, expected_code, expected_message):
         dataset_id, document_ids = add_documents
-        res = update_document(api_key, dataset_id, document_ids[0], {"meta_fields": meta_fields})
+        res = update_document(HttpApiAuth, dataset_id, document_ids[0], {"meta_fields": meta_fields})
         if expected_code == 0:
-            res = list_documents(api_key, dataset_id, {"id": document_ids[0]})
+            res = list_documents(HttpApiAuth, dataset_id, {"id": document_ids[0]})
             assert res["data"]["docs"][0]["meta_fields"] == meta_fields
         else:
-            assert res["message"] == expected_message
+            assert expected_message in res["message"] or res["message"] == expected_message
+
+    @pytest.mark.p2
+    @pytest.mark.parametrize(
+        "meta_fields, expected_code, expected_message",
+        [
+            # Test with invalid document ID (not owned by dataset)
+            ({"author": "alice"}, 102, "The dataset doesn't own the document."),
+        ],
+    )
+    def test_meta_fields_invalid_document(self, HttpApiAuth, add_documents, meta_fields, expected_code, expected_message):
+        """Test meta_fields update with invalid document ID"""
+        dataset_id, _ = add_documents
+        res = update_document(HttpApiAuth, dataset_id, "invalid_doc_id_12345678901234567890", {"meta_fields": meta_fields})
+        assert res["code"] == expected_code
+        assert expected_message in res["message"]
 
     @pytest.mark.p2
     @pytest.mark.parametrize(
@@ -159,24 +194,26 @@ class TestDocumentsUpdated:
             ("knowledge_graph", 0, ""),
             ("email", 0, ""),
             ("tag", 0, ""),
-            ("", 102, "`chunk_method`  doesn't exist"),
+            ("", 102, "`chunk_method` (empty string) is not valid"),
             (
                 "other_chunk_method",
                 102,
-                "`chunk_method` other_chunk_method doesn't exist",
+                "Field: <chunk_method> - Message: <`chunk_method` other_chunk_method doesn't exist> - Value: <other_chunk_method>",
             ),
         ],
     )
-    def test_chunk_method(self, api_key, add_documents, chunk_method, expected_code, expected_message):
+    def test_chunk_method(self, HttpApiAuth, add_documents, chunk_method, expected_code, expected_message):
         dataset_id, document_ids = add_documents
-        res = update_document(api_key, dataset_id, document_ids[0], {"chunk_method": chunk_method})
+        res = update_document(HttpApiAuth, dataset_id, document_ids[0], {"chunk_method": chunk_method})
         assert res["code"] == expected_code
         if expected_code == 0:
-            res = list_documents(api_key, dataset_id, {"id": document_ids[0]})
-            if chunk_method != "":
-                assert res["data"]["docs"][0]["chunk_method"] == chunk_method
+            res = list_documents(HttpApiAuth, dataset_id, {"id": document_ids[0]})
+            doc_of_id = res["data"]["docs"][0]
+            if chunk_method == "":
+                assert doc_of_id["chunk_method"] == "naive"
             else:
-                assert res["data"]["docs"][0]["chunk_method"] == "naive"
+                print(f"doc:{doc_of_id}")
+                assert doc_of_id["chunk_method"] == chunk_method
         else:
             assert res["message"] == expected_message
 
@@ -228,7 +265,7 @@ class TestDocumentsUpdated:
                 marks=pytest.mark.skip(reason="issues/6104"),
             ),
             pytest.param(
-                {"process_duation": 1.0},
+                {"process_duration": 1.0},
                 102,
                 "The input parameters are invalid.",
                 marks=pytest.mark.skip(reason="issues/6104"),
@@ -287,16 +324,71 @@ class TestDocumentsUpdated:
     )
     def test_invalid_field(
         self,
-        api_key,
+        HttpApiAuth,
         add_documents,
         payload,
         expected_code,
         expected_message,
     ):
         dataset_id, document_ids = add_documents
-        res = update_document(api_key, dataset_id, document_ids[0], payload)
+        res = update_document(HttpApiAuth, dataset_id, document_ids[0], payload)
         assert res["code"] == expected_code
         assert res["message"] == expected_message
+
+    @pytest.mark.p2
+    @pytest.mark.parametrize(
+        "payload, expected_code, expected_message",
+        [
+            ({"chunk_count": 100}, 102, "Can't change `chunk_count`."),
+            ({"token_count": 100}, 102, "Can't change `token_count`."),
+            ({"progress": 2.0}, 102, "Field: <progress> - Message: <Input should be less than or equal to 1> - Value: <2.0>"),
+            ({"progress": 1.0}, 102, "Can't change `progress`."),
+            ({"meta_fields": []}, 102, "Field: <meta_fields> - Message: <Input should be a valid dictionary> - Value: <[]>"),
+        ],
+    )
+    def test_update_doc_guards_and_error_paths(self, HttpApiAuth, add_documents, payload, expected_code, expected_message):
+        """
+        Test various guard conditions and error paths for document update functionality.
+        This includes testing for invalid dataset ownership, document ownership,
+        immutable fields, and validation errors.
+        """
+        dataset_id, document_ids = add_documents
+        document_id = document_ids[0]
+
+        res = update_document(HttpApiAuth, dataset_id, document_id, payload)
+        assert res["code"] == expected_code
+        if expected_message:
+            assert expected_message in res["message"] or res["message"] == expected_message
+
+
+DEFAULT_PARSER_CONFIG_FOR_TEST = {
+    "layout_recognize": "DeepDOC",
+    "chunk_token_num": 512,
+    "delimiter": "\n",
+    "auto_keywords": 0,
+    "auto_questions": 0,
+    "html4excel": False,
+    "topn_tags": 3,
+    "raptor": {
+        "use_raptor": True,
+        "prompt": "Please summarize the following paragraphs. Be careful with the numbers, do not make things up. Paragraphs as following:\n      {cluster_content}\nThe above is the content you need to summarize.",
+        "max_token": 256,
+        "threshold": 0.1,
+        "max_cluster": 64,
+        "random_seed": 0,
+    },
+    "graphrag": {
+        "use_graphrag": True,
+        "entity_types": [
+            "organization",
+            "person",
+            "geo",
+            "event",
+            "category",
+        ],
+        "method": "light",
+    },
+}
 
 
 class TestUpdateDocumentParserConfig:
@@ -307,51 +399,39 @@ class TestUpdateDocumentParserConfig:
             ("naive", {}, 0, ""),
             (
                 "naive",
-                {
-                    "chunk_token_num": 128,
-                    "layout_recognize": "DeepDOC",
-                    "html4excel": False,
-                    "delimiter": r"\n",
-                    "task_page_size": 12,
-                    "raptor": {"use_raptor": False},
-                },
+                DEFAULT_PARSER_CONFIG_FOR_TEST,
                 0,
                 "",
             ),
             pytest.param(
                 "naive",
                 {"chunk_token_num": -1},
-                100,
-                "AssertionError('chunk_token_num should be in range from 1 to 100000000')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be greater than or equal to 1> - Value: <-1>",
             ),
             pytest.param(
                 "naive",
                 {"chunk_token_num": 0},
-                100,
-                "AssertionError('chunk_token_num should be in range from 1 to 100000000')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be greater than or equal to 1> - Value: <0>",
             ),
             pytest.param(
                 "naive",
                 {"chunk_token_num": 100000000},
-                100,
-                "AssertionError('chunk_token_num should be in range from 1 to 100000000')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be less than or equal to 2048> - Value: <100000000>",
             ),
             pytest.param(
                 "naive",
                 {"chunk_token_num": 3.14},
                 102,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be a valid integer> - Value: <3.14>",
             ),
             pytest.param(
                 "naive",
                 {"chunk_token_num": "1024"},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.chunk_token_num> - Message: <Input should be a valid integer> - Value: <1024>",
             ),
             (
                 "naive",
@@ -370,152 +450,141 @@ class TestUpdateDocumentParserConfig:
             pytest.param(
                 "naive",
                 {"html4excel": 1},
-                100,
-                "AssertionError('html4excel should be True or False')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.html4excel> - Message: <Input should be a valid boolean> - Value: <1>",
             ),
-            ("naive", {"delimiter": ""}, 0, ""),
+            ("naive", {"delimiter": ""}, 102, "Field: <parser_config.delimiter> - Message: <String should have at least 1 character> - Value: <>"),
             ("naive", {"delimiter": "`##`"}, 0, ""),
             pytest.param(
                 "naive",
                 {"delimiter": 1},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.delimiter> - Message: <Input should be a valid string> - Value: <1>",
             ),
             pytest.param(
                 "naive",
                 {"task_page_size": -1},
-                100,
-                "AssertionError('task_page_size should be in range from 1 to 100000000')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.task_page_size> - Message: <Input should be greater than or equal to 1> - Value: <-1>",
             ),
             pytest.param(
                 "naive",
                 {"task_page_size": 0},
-                100,
-                "AssertionError('task_page_size should be in range from 1 to 100000000')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.task_page_size> - Message: <Input should be greater than or equal to 1> - Value: <0>",
             ),
             pytest.param(
                 "naive",
                 {"task_page_size": 100000000},
-                100,
-                "AssertionError('task_page_size should be in range from 1 to 100000000')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                0,
+                "",
             ),
             pytest.param(
                 "naive",
                 {"task_page_size": 3.14},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.task_page_size> - Message: <Input should be a valid integer> - Value: <3.14>",
             ),
             pytest.param(
                 "naive",
                 {"task_page_size": "1024"},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.task_page_size> - Message: <Input should be a valid integer> - Value: <1024>",
             ),
-            ("naive", {"raptor": {"use_raptor": True}}, 0, ""),
+            (
+                "naive",
+                {
+                    "raptor": {
+                        "use_raptor": {"a": "b"},
+                    }
+                },
+                102,
+                "Field: <parser_config.raptor.use_raptor> - Message: <Input should be a valid boolean> - Value: <{'a': 'b'}>",
+            ),
             ("naive", {"raptor": {"use_raptor": False}}, 0, ""),
             pytest.param(
                 "naive",
                 {"invalid_key": "invalid_value"},
-                100,
-                """AssertionError("Abnormal \'parser_config\'. Invalid key: invalid_key")""",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.invalid_key> - Message: <Extra inputs are not permitted> - Value: <invalid_value>",
             ),
             pytest.param(
                 "naive",
                 {"auto_keywords": -1},
-                100,
-                "AssertionError('auto_keywords should be in range from 0 to 32')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.auto_keywords> - Message: <Input should be greater than or equal to 0> - Value: <-1>",
             ),
             pytest.param(
                 "naive",
                 {"auto_keywords": 32},
-                100,
-                "AssertionError('auto_keywords should be in range from 0 to 32')",
-                marks=pytest.mark.skip(reason="issues/6098"),
-            ),
-            pytest.param(
-                "naive",
-                {"auto_questions": 3.14},
-                100,
+                0,
                 "",
-                marks=pytest.mark.skip(reason="issues/6098"),
             ),
             pytest.param(
                 "naive",
                 {"auto_keywords": "1024"},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.auto_keywords> - Message: <Input should be a valid integer> - Value: <1024>",
+            ),
+            pytest.param(
+                "naive",
+                {"auto_keywords": 3.14},
+                102,
+                "Field: <parser_config.auto_keywords> - Message: <Input should be a valid integer> - Value: <3.14>",
             ),
             pytest.param(
                 "naive",
                 {"auto_questions": -1},
-                100,
-                "AssertionError('auto_questions should be in range from 0 to 10')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.auto_questions> - Message: <Input should be greater than or equal to 0> - Value: <-1>",
             ),
             pytest.param(
                 "naive",
                 {"auto_questions": 10},
-                100,
-                "AssertionError('auto_questions should be in range from 0 to 10')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                0,
+                "",
             ),
             pytest.param(
                 "naive",
                 {"auto_questions": 3.14},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.auto_questions> - Message: <Input should be a valid integer> - Value: <3.14>",
             ),
             pytest.param(
                 "naive",
                 {"auto_questions": "1024"},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.auto_questions> - Message: <Input should be a valid integer> - Value: <1024>",
             ),
             pytest.param(
                 "naive",
                 {"topn_tags": -1},
-                100,
-                "AssertionError('topn_tags should be in range from 0 to 10')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.topn_tags> - Message: <Input should be greater than or equal to 1> - Value: <-1>",
             ),
             pytest.param(
                 "naive",
                 {"topn_tags": 10},
-                100,
-                "AssertionError('topn_tags should be in range from 0 to 10')",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                0,
+                "",
             ),
             pytest.param(
                 "naive",
                 {"topn_tags": 3.14},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.topn_tags> - Message: <Input should be a valid integer> - Value: <3.14>",
             ),
             pytest.param(
                 "naive",
                 {"topn_tags": "1024"},
-                100,
-                "",
-                marks=pytest.mark.skip(reason="issues/6098"),
+                102,
+                "Field: <parser_config.topn_tags> - Message: <Input should be a valid integer> - Value: <1024>",
             ),
         ],
     )
     def test_parser_config(
         self,
-        api_key,
+        HttpApiAuth,
         add_documents,
         chunk_method,
         parser_config,
@@ -524,24 +593,20 @@ class TestUpdateDocumentParserConfig:
     ):
         dataset_id, document_ids = add_documents
         res = update_document(
-            api_key,
+            HttpApiAuth,
             dataset_id,
             document_ids[0],
             {"chunk_method": chunk_method, "parser_config": parser_config},
         )
         assert res["code"] == expected_code
         if expected_code == 0:
-            res = list_documents(api_key, dataset_id, {"id": document_ids[0]})
-            if parser_config != {}:
-                for k, v in parser_config.items():
-                    assert res["data"]["docs"][0]["parser_config"][k] == v
+            res = list_documents(HttpApiAuth, dataset_id, {"id": document_ids[0]})
+
+            doc_of_id = res["data"]["docs"][0]
+            if parser_config == {}:
+                assert doc_of_id["parser_config"] == DEFAULT_PARSER_CONFIG
             else:
-                assert res["data"]["docs"][0]["parser_config"] == {
-                    "chunk_token_num": 128,
-                    "delimiter": r"\n",
-                    "html4excel": False,
-                    "layout_recognize": "DeepDOC",
-                    "raptor": {"use_raptor": False},
-                }
+                for k, v in parser_config.items():
+                    assert doc_of_id["parser_config"][k] == v
         if expected_code != 0 or expected_message:
             assert res["message"] == expected_message

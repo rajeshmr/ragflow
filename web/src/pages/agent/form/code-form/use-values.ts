@@ -1,27 +1,42 @@
-import { CodeTemplateStrMap, ProgrammingLanguage } from '@/constants/agent';
-import { RAGFlowNodeType } from '@/interfaces/database/flow';
+import { RAGFlowNodeType } from '@/interfaces/database/agent';
 import { isEmpty } from 'lodash';
 import { useMemo } from 'react';
+import { initialCodeValues } from '../../constant';
+import { buildDefaultCodeOutput, deserializeCodeOutputContract } from './utils';
+
+function convertToArray(args: Record<string, string>) {
+  return Object.entries(args).map(([key, value]) => ({
+    name: key,
+    type: value,
+  }));
+}
 
 export function useValues(node?: RAGFlowNodeType) {
-  const defaultValues = useMemo(
-    () => ({
-      lang: ProgrammingLanguage.Python,
-      script: CodeTemplateStrMap[ProgrammingLanguage.Python],
-      arguments: [],
-    }),
-    [],
-  );
-
-  const values = useMemo(() => {
+  const valueState = useMemo(() => {
     const formData = node?.data?.form;
 
     if (isEmpty(formData)) {
-      return defaultValues;
+      return {
+        values: {
+          ...initialCodeValues,
+          arguments: convertToArray(initialCodeValues.arguments),
+          output: buildDefaultCodeOutput(),
+        },
+        legacyOutputs: [],
+      };
     }
 
-    return formData;
-  }, [defaultValues, node?.data?.form]);
+    const { contract, legacyOutputs } = deserializeCodeOutputContract(formData);
 
-  return values;
+    return {
+      values: {
+        ...formData,
+        arguments: convertToArray(formData.arguments),
+        output: contract ?? buildDefaultCodeOutput(),
+      },
+      legacyOutputs,
+    };
+  }, [node?.data?.form]);
+
+  return valueState;
 }

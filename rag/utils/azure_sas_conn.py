@@ -18,9 +18,9 @@ import logging
 import os
 import time
 from io import BytesIO
-from rag import settings
-from rag.utils import singleton
+from common.decorator import singleton
 from azure.storage.blob import ContainerClient
+from common import settings
 
 
 @singleton
@@ -51,7 +51,7 @@ class RAGFlowAzureSasBlob:
         _bucket, fnm, binary = "txtxtxtxt1", "txtxtxtxt1", b"_t@@@1"
         return self.conn.upload_blob(name=fnm, data=BytesIO(binary), length=len(binary))
 
-    def put(self, bucket, fnm, binary):
+    def put(self, bucket, fnm, binary, tenant_id=None):
         for _ in range(3):
             try:
                 return self.conn.upload_blob(name=fnm, data=BytesIO(binary), length=len(binary))

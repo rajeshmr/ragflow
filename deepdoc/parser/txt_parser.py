@@ -17,7 +17,7 @@
 import re
 
 from deepdoc.parser.utils import get_text
-from rag.nlp import num_tokens_from_string
+from common.token_utils import num_tokens_from_string
 
 
 class RAGFlowTxtParser:
@@ -40,7 +40,10 @@ class RAGFlowTxtParser:
                 cks.append(t)
                 tk_nums.append(tnum)
             else:
-                cks[-1] += t
+                if cks[-1]:
+                    cks[-1] += "\n" + t
+                else:
+                    cks[-1] += t
                 tk_nums[-1] += tnum
 
         dels = []

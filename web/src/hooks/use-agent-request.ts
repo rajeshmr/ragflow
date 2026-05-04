@@ -1,23 +1,50 @@
-import { DSL, IFlow, IFlowTemplate } from '@/interfaces/database/flow';
+import { FileUploadProps } from '@/components/file-upload';
+import { useHandleFilterSubmit } from '@/components/list-filter-bar/use-handle-filter-submit';
+import message from '@/components/ui/message';
+import { AgentCategory, AgentGlobals } from '@/constants/agent';
+import { useFetchTenantInfo } from '@/hooks/use-user-setting-request';
+import {
+  IAgentLogResponse,
+  IAgentLogsRequest,
+  IAgentLogsResponse,
+  IFlow,
+  IFlowTemplate,
+  IPipeLineListRequest,
+  ITraceData,
+  IWebhookTrace,
+} from '@/interfaces/database/agent';
+import {
+  IAgentWebhookTraceRequest,
+  IDebugSingleRequestBody,
+} from '@/interfaces/request/agent';
 import i18n from '@/locales/config';
-import { BeginId } from '@/pages/agent/constant';
-import { useGetSharedChatSearchParams } from '@/pages/chat/shared-hooks';
-import flowService from '@/services/flow-service';
+import { IInputs } from '@/pages/agent/interface';
+import { useGetSharedChatSearchParams } from '@/pages/next-chats/hooks/use-send-shared-message';
+import agentService, {
+  createAgentSession,
+  deleteAgentSession,
+  fetchAgentLogsByCanvasId,
+  fetchAgentLogsById,
+  fetchPipeLineList,
+  fetchTrace,
+  fetchWebhookTrace,
+  updateAgent,
+  uploadAgentFile,
+} from '@/services/agent-service';
 import { buildMessageListWithUuid } from '@/utils/chat';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebounce } from 'ahooks';
-import { message } from 'antd';
-import { get, set } from 'lodash';
-import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
-import { useParams } from 'umi';
-import { v4 as uuid } from 'uuid';
+import { get, isEmpty, set } from 'lodash';
+import { useCallback, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router';
 import {
   useGetPaginationWithRouter,
   useHandleSearchChange,
 } from './logic-hooks';
 
 export const enum AgentApiAction {
+  FetchAgentListByPage = 'fetchAgentListByPage',
+  FetchAllAgentList = 'fetchAllAgentList',
   FetchAgentList = 'fetchAgentList',
   UpdateAgentSetting = 'updateAgentSetting',
   DeleteAgent = 'deleteAgent',
@@ -25,65 +52,35 @@ export const enum AgentApiAction {
   ResetAgent = 'resetAgent',
   SetAgent = 'setAgent',
   FetchAgentTemplates = 'fetchAgentTemplates',
+  UploadAgentFile = 'uploadAgentFile',
+  UploadAgentFileWithProgress = 'uploadAgentFileWithProgress',
+  Trace = 'trace',
+  TestDbConnect = 'testDbConnect',
+  DebugSingle = 'debugSingle',
+  FetchInputForm = 'fetchInputForm',
+  FetchVersionList = 'fetchVersionList',
+  FetchVersion = 'fetchVersion',
+  FetchExternalAgentInputs = 'fetchExternalAgentInputs',
+  SetAgentSetting = 'setAgentSetting',
+  FetchPrompt = 'fetchPrompt',
+  CancelDataflow = 'cancelDataflow',
+  CancelCanvas = 'cancelCanvas',
+  FetchWebhookTrace = 'fetchWebhookTrace',
+  FetchSessionsByCanvasId = 'fetchSessionsByCanvasId',
+  FetchSessionById = 'fetchSessionById',
+  CreateAgentSession = 'createAgentSession',
+  DeleteAgentSession = 'deleteAgentSession',
+  FetchSessionByIdManually = 'fetchSessionByIdManually',
+  FetchAgentLog = 'fetchAgentLog',
+  FetchSharedAgent = 'fetchSharedAgent',
 }
 
-export const EmptyDsl = {
-  graph: {
-    nodes: [
-      {
-        id: BeginId,
-        type: 'beginNode',
-        position: {
-          x: 50,
-          y: 200,
-        },
-        data: {
-          label: 'Begin',
-          name: 'begin',
-        },
-        sourcePosition: 'left',
-        targetPosition: 'right',
-      },
-    ],
-    edges: [],
-  },
-  components: {
-    begin: {
-      obj: {
-        component_name: 'Begin',
-        params: {},
-      },
-      downstream: ['Answer:China'], // other edge target is downstream, edge source is current node id
-      upstream: [], // edge source is upstream, edge target is current node id
-    },
-  },
-  retrieval: [], // reference
-  history: [],
-  path: [],
-  globals: {
-    'sys.query': '',
-    'sys.user_id': '',
-    'sys.conversation_turns': 0,
-    'sys.files': [],
-  },
-};
-
 export const useFetchAgentTemplates = () => {
-  const { t } = useTranslation();
-
   const { data } = useQuery<IFlowTemplate[]>({
     queryKey: [AgentApiAction.FetchAgentTemplates],
     initialData: [],
     queryFn: async () => {
-      const { data } = await flowService.listTemplates();
-      if (Array.isArray(data?.data)) {
-        data.data.unshift({
-          id: uuid(),
-          title: t('flow.blank'),
-          description: t('flow.createFromNothing'),
-          dsl: EmptyDsl,
-        });
-      }
+      const { data } = await agentService.listAgentTemplate();
 
       return data.data;
     },
@@ -92,52 +89,127 @@ export const useFetchAgentTemplates = () => {
   return data;
 };
 
+const buildAgentListParams = ({
+  page,
+  pageSize,
+  keywords,
+  canvasCategory,
+  ownerIds,
+}: {
+  page: number;
+  pageSize: number;
+  keywords?: string;
+  canvasCategory?: string;
+  ownerIds?: string[];
+}) => {
+  const params: Record<string, unknown> = {
+    page,
+    page_size: pageSize,
+  };
+
+  if (keywords) {
+    params.keywords = keywords;
+  }
+  if (canvasCategory) {
+    params.canvas_category = canvasCategory;
+  }
+  if (Array.isArray(ownerIds) && ownerIds.length > 0) {
+    params.owner_ids = ownerIds.join(',');
+  }
+
+  return params;
+};
+
 export const useFetchAgentListByPage = () => {
   const { searchString, handleInputChange } = useHandleSearchChange();
   const { pagination, setPagination } = useGetPaginationWithRouter();
   const debouncedSearchString = useDebounce(searchString, { wait: 500 });
+  const { filterValue, handleFilterSubmit } = useHandleFilterSubmit();
+  const canvasCategory = Array.isArray(filterValue.canvasCategory)
+    ? filterValue.canvasCategory
+    : [];
+  const owner = filterValue.owner;
+
+  const requestParams = buildAgentListParams({
+    page: pagination.current,
+    pageSize: pagination.pageSize,
+    keywords: debouncedSearchString,
+    canvasCategory: canvasCategory.length === 1 ? canvasCategory[0] : undefined,
+    ownerIds: Array.isArray(owner) ? owner : undefined,
+  });
 
   const { data, isFetching: loading } = useQuery<{
-    kbs: IFlow[];
+    canvas: IFlow[];
     total: number;
   }>({
     queryKey: [
-      AgentApiAction.FetchAgentList,
+      AgentApiAction.FetchAgentListByPage,
       {
         debouncedSearchString,
         ...pagination,
+        filterValue,
       },
     ],
-    initialData: { kbs: [], total: 0 },
+    placeholderData: (previousData) => {
+      if (previousData === undefined) {
+        return { canvas: [], total: 0 };
+      }
+      return previousData;
+    },
     gcTime: 0,
     queryFn: async () => {
-      const { data } = await flowService.listCanvasTeam({
-        keywords: debouncedSearchString,
-        page_size: pagination.pageSize,
-        page: pagination.current,
-      });
+      const { data } = await agentService.listAgents(
+        {
+          params: requestParams,
+        },
+        true,
+      );
 
-      return data?.data ?? [];
+      return data?.data;
     },
   });
 
   const onInputChange: React.ChangeEventHandler<HTMLInputElement> = useCallback(
     (e) => {
-      // setPagination({ page: 1 }); // TODO: 这里导致重复请求
+      // setPagination({ page: 1 });
       handleInputChange(e);
     },
     [handleInputChange],
   );
 
   return {
-    data: data.kbs,
+    data: data?.canvas ?? [],
     loading,
     searchString,
     handleInputChange: onInputChange,
     pagination: { ...pagination, total: data?.total },
     setPagination,
+    filterValue,
+    handleFilterSubmit,
   };
 };
+
+export function useFetchAllAgentList() {
+  const { data, isFetching: loading } = useQuery<IFlow[]>({
+    queryKey: [AgentApiAction.FetchAllAgentList],
+    queryFn: async () => {
+      const { data } = await agentService.listAgents(
+        {
+          params: buildAgentListParams({
+            page: 1,
+            pageSize: 100000,
+            canvasCategory: AgentCategory.AgentCanvas,
+          }),
+        },
+        true,
+      );
+
+      return data?.data?.canvas;
+    },
+  });
+
+  return { data, loading };
+}
 
 export const useUpdateAgentSetting = () => {
   const queryClient = useQueryClient();
@@ -149,11 +221,16 @@ export const useUpdateAgentSetting = () => {
   } = useMutation({
     mutationKey: [AgentApiAction.UpdateAgentSetting],
     mutationFn: async (params: any) => {
-      const ret = await flowService.settingCanvas(params);
+      const ret = await updateAgent(params.id, {
+        title: params.title,
+        description: params.description,
+        permission: params.permission,
+        avatar: params.avatar,
+      });
       if (ret?.data?.code === 0) {
         message.success('success');
         queryClient.invalidateQueries({
-          queryKey: [AgentApiAction.FetchAgentList],
+          queryKey: [AgentApiAction.FetchAgentListByPage],
         });
       } else {
         message.error(ret?.data?.data);
@@ -173,14 +250,14 @@ export const useDeleteAgent = () => {
     mutateAsync,
   } = useMutation({
     mutationKey: [AgentApiAction.DeleteAgent],
-    mutationFn: async (canvasIds: string[]) => {
-      const { data } = await flowService.removeCanvas({ canvasIds });
+    mutationFn: async (agentId: string) => {
+      const { data } = await agentService.deleteAgent(agentId);
       if (data.code === 0) {
         queryClient.invalidateQueries({
-          queryKey: [AgentApiAction.FetchAgentList],
+          queryKey: [AgentApiAction.FetchAgentListByPage],
         });
       }
-      return data?.data ?? [];
+      return data?.data ?? false;
     },
   });
 
@@ -207,12 +284,23 @@ export const useFetchAgent = (): {
     refetchOnWindowFocus: false,
     gcTime: 0,
     queryFn: async () => {
-      const { data } = await flowService.getCanvas({}, sharedId || id);
+      const { data } = await agentService.getAgent(sharedId || id);
 
       const messageList = buildMessageListWithUuid(
         get(data, 'data.dsl.messages', []),
       );
       set(data, 'data.dsl.messages', messageList);
+
+      const sysHistoryPath = [
+        'data',
+        'dsl',
+        'globals',
+        AgentGlobals.SysHistory,
+      ];
+
+      if (isEmpty(get(data, sysHistoryPath))) {
+        set(data, sysHistoryPath, []);
+      }
 
       return data?.data ?? {};
     },
@@ -230,7 +318,7 @@ export const useResetAgent = () => {
   } = useMutation({
     mutationKey: [AgentApiAction.ResetAgent],
     mutationFn: async () => {
-      const { data } = await flowService.resetCanvas({ id });
+      const { data } = await agentService.resetAgent(id);
       return data;
     },
   });
@@ -238,7 +326,8 @@ export const useResetAgent = () => {
   return { data, loading, resetAgent: mutateAsync };
 };
 
-export const useSetAgent = () => {
+export const useSetAgent = (showMessage: boolean = true) => {
+  const { id } = useParams();
   const queryClient = useQueryClient();
   const {
     data,
@@ -249,21 +338,657 @@ export const useSetAgent = () => {
     mutationFn: async (params: {
       id?: string;
       title?: string;
-      dsl?: DSL;
+      dsl?: Record<string, any>;
       avatar?: string;
+      canvas_category?: string;
+      release?: string;
+      description?: string | null;
+      permission?: string;
     }) => {
-      const { data = {} } = await flowService.setCanvas(params);
+      const agentId = params.id ?? id;
+      const { data = {} } = agentId
+        ? await updateAgent(agentId, {
+            title: params.title,
+            dsl: params.dsl,
+            avatar: params.avatar,
+            description: params.description,
+            permission: params.permission,
+            release: params.release,
+          })
+        : await agentService.createAgent(params);
       if (data.code === 0) {
-        message.success(
-          i18n.t(`message.${params?.id ? 'modified' : 'created'}`),
-        );
+        if (showMessage) {
+          message.success(
+            i18n.t(`message.${agentId ? 'modified' : 'created'}`),
+          );
+        }
         queryClient.invalidateQueries({
-          queryKey: [AgentApiAction.FetchAgentList],
+          queryKey: [AgentApiAction.FetchAgentListByPage],
         });
+        if (agentId) {
+          queryClient.invalidateQueries({
+            queryKey: [AgentApiAction.FetchAgentDetail],
+          });
+        }
       }
       return data;
     },
   });
 
   return { data, loading, setAgent: mutateAsync };
+};
+
+// Only one file can be uploaded at a time
+export const useUploadAgentFile = () => {
+  const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const shared_id = searchParams.get('shared_id');
+  const agentId = id || shared_id;
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.UploadAgentFile],
+    mutationFn: async (body: any) => {
+      let nextBody = body;
+      try {
+        if (Array.isArray(body)) {
+          nextBody = new FormData();
+          body.forEach((file: File) => {
+            nextBody.append('file', file as any);
+          });
+        }
+
+        const { data } = await uploadAgentFile(agentId as string, nextBody);
+        if (data?.code === 0) {
+          message.success(i18n.t('message.uploaded'));
+        }
+        return data;
+      } catch (error) {
+        message.error(error as string);
+      }
+    },
+  });
+
+  return { data, loading, uploadAgentFile: mutateAsync };
+};
+
+export const useUploadAgentFileWithProgress = (identifier?: string | null) => {
+  const { id } = useParams();
+
+  type UploadParameters = Parameters<NonNullable<FileUploadProps['onUpload']>>;
+
+  type X = { files: UploadParameters[0]; options: UploadParameters[1] };
+
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.UploadAgentFileWithProgress],
+    mutationFn: async ({
+      files,
+      options: { onError, onSuccess, onProgress },
+    }: X) => {
+      const formData = new FormData();
+      try {
+        if (Array.isArray(files)) {
+          files.forEach((file: File) => {
+            formData.append('file', file);
+          });
+        }
+
+        const { data } = await agentService.uploadAgentFile(
+          {
+            agentId: identifier || id,
+            data: formData,
+            onUploadProgress: ({ progress }) => {
+              files.forEach((file) => {
+                onProgress(file, (progress || 0) * 100);
+              });
+            },
+          },
+          true,
+        );
+        if (data?.code === 0) {
+          files.forEach((file) => {
+            onSuccess(file);
+          });
+          message.success(i18n.t('message.uploaded'));
+        }
+        return data;
+      } catch (error) {
+        files.forEach((file) => {
+          onError(file, error as Error);
+        });
+        message.error((error as Error)?.message || 'Upload failed');
+      }
+    },
+  });
+
+  return { data, loading, uploadAgentFile: mutateAsync };
+};
+
+export const useFetchMessageTrace = (canvasId?: string) => {
+  const { id } = useParams();
+  const queryId = id || canvasId;
+  const [messageId, setMessageId] = useState('');
+  const [isStopFetchTrace, setISStopFetchTrace] = useState(false);
+
+  const {
+    data,
+    isFetching: loading,
+    refetch,
+  } = useQuery<ITraceData[]>({
+    queryKey: [AgentApiAction.Trace, queryId, messageId],
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    enabled: !!queryId && !!messageId,
+    refetchInterval: !isStopFetchTrace ? 3000 : false,
+    queryFn: async () => {
+      const { data } = await fetchTrace({
+        canvas_id: queryId as string,
+        message_id: messageId,
+      });
+
+      return Array.isArray(data?.data) ? data?.data : [];
+    },
+  });
+
+  return {
+    data,
+    loading,
+    refetch,
+    setMessageId,
+    messageId,
+    isStopFetchTrace,
+    setISStopFetchTrace,
+  };
+};
+
+export const useTestDbConnect = () => {
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.TestDbConnect],
+    mutationFn: async (params: any) => {
+      const ret = await agentService.testDbConnect(params);
+      if (ret?.data?.code === 0) {
+        message.success(ret?.data?.data);
+      } else {
+        message.error(ret?.data?.data);
+      }
+      return ret;
+    },
+  });
+
+  return { data, loading, testDbConnect: mutateAsync };
+};
+
+export const useDebugSingle = () => {
+  const { id } = useParams();
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.DebugSingle],
+    mutationFn: async (params: IDebugSingleRequestBody) => {
+      const ret = await agentService.debugSingle(
+        {
+          agentId: id as string,
+          componentId: params.component_id,
+          data: {
+            params: params.params,
+          },
+        },
+        true,
+      );
+      if (ret?.data?.code !== 0) {
+        message.error(ret?.data?.message);
+      }
+      return ret?.data?.data;
+    },
+  });
+
+  return { data, loading, debugSingle: mutateAsync };
+};
+
+export const useFetchInputForm = (componentId?: string) => {
+  const { id } = useParams();
+
+  const { data } = useQuery<Record<string, any>>({
+    queryKey: [AgentApiAction.FetchInputForm],
+    initialData: {},
+    enabled: !!id && !!componentId,
+    queryFn: async () => {
+      const { data } = await agentService.inputForm(
+        { agentId: id as string, componentId: componentId as string },
+        true,
+      );
+
+      return data.data;
+    },
+  });
+
+  return data;
+};
+
+export const useFetchVersionList = () => {
+  const { id } = useParams();
+  const { data, isFetching: loading } = useQuery<
+    Array<{ created_at: string; title: string; id: string; release?: boolean }>
+  >({
+    queryKey: [AgentApiAction.FetchVersionList],
+    initialData: [],
+    gcTime: 0,
+    queryFn: async () => {
+      const { data } = await agentService.fetchVersionList(id);
+
+      return data?.data ?? [];
+    },
+  });
+
+  return { data, loading };
+};
+
+export const useFetchVersion = (
+  version_id?: string,
+): {
+  data?: IFlow;
+  loading: boolean;
+} => {
+  const { id } = useParams();
+  const { data, isFetching: loading } = useQuery({
+    queryKey: [AgentApiAction.FetchVersion, id, version_id],
+    initialData: undefined,
+    gcTime: 0,
+    enabled: !!id && !!version_id,
+    queryFn: async () => {
+      if (!id || !version_id) return undefined;
+
+      const { data } = await agentService.fetchVersion({
+        agentId: id,
+        versionId: version_id,
+      });
+
+      return data?.data ?? undefined;
+    },
+  });
+
+  return { data, loading };
+};
+
+export const useFetchAgentLog = (searchParams: IAgentLogsRequest) => {
+  const { id } = useParams();
+  const { data, isFetching: loading } = useQuery<IAgentLogsResponse>({
+    queryKey: [AgentApiAction.FetchAgentLog, id, searchParams],
+    initialData: {} as IAgentLogsResponse,
+    gcTime: 0,
+    queryFn: async () => {
+      const { data } = await fetchAgentLogsByCanvasId(id as string, {
+        ...searchParams,
+      });
+
+      return { total: data?.total ?? 0, sessions: data?.data ?? [] };
+    },
+  });
+
+  return { data, loading };
+};
+
+export const useFetchSessionsByCanvasId = () => {
+  const { id: canvasId } = useParams();
+  const { data: tenantInfo } = useFetchTenantInfo();
+
+  const { data, isFetching: loading } = useQuery<IAgentLogsResponse>({
+    queryKey: [AgentApiAction.FetchSessionsByCanvasId, canvasId],
+    initialData: { total: 0, sessions: [] } as IAgentLogsResponse,
+    gcTime: 0,
+    enabled: !!canvasId && !isEmpty(tenantInfo),
+    queryFn: async () => {
+      if (!canvasId) {
+        return { total: 0, sessions: [] };
+      }
+
+      const { data } = await fetchAgentLogsByCanvasId(canvasId, {
+        page: 1,
+        page_size: 100000,
+        exp_user_id: tenantInfo.tenant_id,
+      });
+
+      return { total: data?.total ?? 0, sessions: data?.data ?? [] };
+    },
+  });
+
+  return {
+    data: data?.sessions ?? [],
+    loading,
+    total: data?.total ?? 0,
+  };
+};
+
+export const useFetchExternalAgentInputs = () => {
+  const { sharedId } = useGetSharedChatSearchParams();
+
+  const {
+    data,
+    isFetching: loading,
+    refetch,
+  } = useQuery<IInputs>({
+    queryKey: [AgentApiAction.FetchExternalAgentInputs, sharedId],
+    initialData: {} as IInputs,
+    refetchOnReconnect: false,
+    // refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    enabled: !!sharedId,
+    queryFn: async () => {
+      const { data } = await agentService.fetchExternalAgentInputs(sharedId!);
+
+      return data?.data ?? {};
+    },
+  });
+
+  return { data, loading, refetch };
+};
+
+export const useFetchPrompt = () => {
+  const {
+    data,
+    isFetching: loading,
+    refetch,
+  } = useQuery<Record<string, string>>({
+    queryKey: [AgentApiAction.FetchPrompt],
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const { data } = await agentService.fetchPrompt();
+
+      return data?.data ?? {};
+    },
+  });
+
+  return { data, loading, refetch };
+};
+
+export const useFetchAgentList = ({
+  canvas_category,
+}: IPipeLineListRequest) => {
+  const { data, isFetching: loading } = useQuery<{
+    canvas: IFlow[];
+    total: number;
+  }>({
+    queryKey: [AgentApiAction.FetchAgentList],
+    initialData: { canvas: [], total: 0 },
+    gcTime: 0,
+    queryFn: async () => {
+      const { data } = await fetchPipeLineList({
+        canvas_category,
+      });
+
+      return data?.data ?? [];
+    },
+  });
+
+  return { data, loading };
+};
+
+export const useCancelDataflow = () => {
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.CancelDataflow],
+    mutationFn: async (taskId: string) => {
+      const ret = await agentService.cancelDataflow(taskId);
+      if (ret?.data?.code === 0) {
+        message.success('success');
+      } else {
+        message.error(ret?.data?.data);
+      }
+      return ret?.data?.code;
+    },
+  });
+
+  return { data, loading, cancelDataflow: mutateAsync };
+};
+
+// export const useFetchKnowledgeList = () => {
+//   const { data, isFetching: loading } = useQuery<IFlow[]>({
+//     queryKey: [AgentApiAction.FetchAgentList],
+//     initialData: [],
+//     gcTime: 0, // https://tanstack.com/query/latest/docs/framework/react/guides/caching?from=reactQueryV3
+//     queryFn: async () => {
+//       const { data } = await agentService.listAgents();
+
+//       return data?.data ?? [];
+//     },
+//   });
+
+//   return { list: data, loading };
+// };
+
+export function useCancelConversation() {
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.CancelCanvas],
+    mutationFn: async (taskId: string) => {
+      const ret = await agentService.cancelCanvas(taskId);
+
+      return ret?.data?.code;
+    },
+  });
+
+  return { data, loading, cancelConversation: mutateAsync };
+}
+
+export const useFetchFlowSSE = (): {
+  data: IFlow;
+  loading: boolean;
+  refetch: () => void;
+} => {
+  const { sharedId } = useGetSharedChatSearchParams();
+
+  const {
+    data,
+    isFetching: loading,
+    refetch,
+  } = useQuery({
+    queryKey: [AgentApiAction.FetchSharedAgent, sharedId],
+    initialData: {} as IFlow,
+    enabled: !!sharedId,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      if (!sharedId) return {};
+      const { data } = await agentService.getAgent(sharedId);
+
+      const messageList = buildMessageListWithUuid(
+        get(data, 'data.dsl.messages', []),
+      );
+      set(data, 'data.dsl.messages', messageList);
+
+      return data?.data ?? {};
+    },
+  });
+
+  return { data, loading, refetch };
+};
+
+export const useFetchWebhookTrace = (autoStart: boolean = true) => {
+  const { id } = useParams();
+  const [currentWebhookId, setCurrentWebhookId] = useState<string>('');
+  const [currentNextSinceTs, setCurrentNextSinceTs] = useState<number>(0);
+  const [shouldPoll, setShouldPoll] = useState(autoStart);
+
+  const {
+    data,
+    isFetching: loading,
+    refetch,
+  } = useQuery<IWebhookTrace>({
+    queryKey: [AgentApiAction.FetchWebhookTrace, id],
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchIntervalInBackground: false,
+    gcTime: 0,
+    enabled: !!id && shouldPoll,
+    queryFn: async () => {
+      if (!id) return {};
+
+      const payload: IAgentWebhookTraceRequest =
+        {} as IAgentWebhookTraceRequest;
+
+      if (currentNextSinceTs) {
+        payload['since_ts'] = currentNextSinceTs;
+      }
+
+      if (currentWebhookId) {
+        payload['webhook_id'] = currentWebhookId;
+      }
+
+      const { data } = await fetchWebhookTrace(id, payload);
+
+      const result = data.data ?? {};
+
+      if (result.webhook_id && result.webhook_id !== currentWebhookId) {
+        setCurrentWebhookId(result.webhook_id);
+      }
+
+      if (
+        currentNextSinceTs === 0 &&
+        result.next_since_ts &&
+        result.next_since_ts !== currentNextSinceTs
+      ) {
+        setCurrentNextSinceTs(result.next_since_ts);
+      }
+
+      if (result.finished) {
+        setShouldPoll(false);
+      }
+
+      return result;
+    },
+    refetchInterval: shouldPoll ? 3000 : false,
+  });
+
+  return {
+    data,
+    loading,
+    refetch,
+    isPolling: shouldPoll,
+    currentWebhookId,
+    currentNextSinceTs,
+  };
+};
+
+export function useCreateAgentSession() {
+  const queryClient = useQueryClient();
+
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.CreateAgentSession],
+    mutationFn: async (payload: { id: string; name: string }) => {
+      const { data } = await createAgentSession(payload);
+
+      if (data.code === 0) {
+        queryClient.invalidateQueries({
+          queryKey: [AgentApiAction.FetchSessionsByCanvasId],
+        });
+      }
+
+      return data?.data ?? {};
+    },
+  });
+
+  return { data, loading, createAgentSession: mutateAsync };
+}
+
+export function useDeleteAgentSession() {
+  const queryClient = useQueryClient();
+
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation({
+    mutationKey: [AgentApiAction.DeleteAgentSession],
+    mutationFn: async ({
+      canvasId,
+      sessionId,
+    }: {
+      canvasId: string;
+      sessionId: string;
+    }) => {
+      const { data } = await deleteAgentSession(canvasId, sessionId);
+
+      if (data.code === 0) {
+        queryClient.invalidateQueries({
+          queryKey: [AgentApiAction.FetchSessionsByCanvasId],
+        });
+      }
+
+      return data?.code ?? -1;
+    },
+  });
+
+  return { data, loading, deleteAgentSession: mutateAsync };
+}
+
+export function useFetchSessionManually() {
+  const { id: canvasId } = useParams();
+
+  const {
+    data,
+    isPending: loading,
+    mutateAsync,
+  } = useMutation<IAgentLogResponse, unknown, string>({
+    mutationKey: [AgentApiAction.FetchSessionByIdManually, canvasId],
+    mutationFn: async (sessionId) => {
+      if (!canvasId || !sessionId) {
+        return null;
+      }
+
+      const { data } = await fetchAgentLogsById(canvasId, sessionId);
+
+      return data?.data;
+    },
+  });
+
+  return { data, loading, fetchSessionManually: mutateAsync };
+}
+
+export const useExportAgentLog = () => {
+  const { id } = useParams();
+  const { mutateAsync, isPending: loading } = useMutation({
+    mutationKey: [AgentApiAction.FetchAgentLog, 'export', id],
+    mutationFn: async (searchParams: IAgentLogsRequest) => {
+      const { data } = await fetchAgentLogsByCanvasId(id as string, {
+        ...searchParams,
+        page: 1,
+        page_size: 100000,
+      });
+
+      return data?.data?.sessions ?? [];
+    },
+  });
+
+  return { exportLogs: mutateAsync, loading };
 };

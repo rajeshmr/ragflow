@@ -1,91 +1,153 @@
-import MessageItem from '@/components/message-item';
 import { MessageType } from '@/constants/chat';
-import { useGetFileIcon } from '@/pages/chat/hooks';
-import { buildMessageItemReference } from '@/pages/chat/utils';
-import { Spin } from 'antd';
 
-import { useSendNextMessage } from './hooks';
+import { useSendAgentMessage } from './use-send-agent-message';
 
-import MessageInput from '@/components/message-input';
-import PdfDrawer from '@/components/pdf-drawer';
+import { FileUploadProps } from '@/components/file-upload';
+import { NextMessageInput } from '@/components/message-input/next';
+import MarkdownContent from '@/components/next-markdown-content';
+import MessageItem from '@/components/next-message-item';
+import PdfSheet from '@/components/pdf-drawer';
 import { useClickDrawer } from '@/components/pdf-drawer/hooks';
-import { useFetchAgent } from '@/hooks/use-agent-request';
-import { useFetchUserInfo } from '@/hooks/user-setting-hooks';
+import {
+  useFetchAgent,
+  useUploadAgentFileWithProgress,
+} from '@/hooks/use-agent-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { buildMessageUuidWithRole } from '@/utils/chat';
+import { memo, useCallback, useContext } from 'react';
+import { useParams } from 'react-router';
+import { AgentChatContext } from '../context';
+import DebugContent from '../debug-content';
+import { useAwaitCompentData } from '../hooks/use-chat-logic';
+import { useIsTaskMode } from '../hooks/use-get-begin-query';
+import { useGetFileIcon } from './use-get-file-icon';
 
-const AgentChatBox = () => {
+function AgentChatBox() {
+  const { data: canvasInfo, refetch } = useFetchAgent();
   const {
+    value,
+    scrollRef,
+    messageContainerRef,
     sendLoading,
+    derivedMessages,
     handleInputChange,
     handlePressEnter,
-    value,
-    loading,
-    ref,
-    derivedMessages,
-    reference,
     stopOutputMessage,
-  } = useSendNextMessage();
+    sendFormMessage,
+    findReferenceByMessageId,
+    appendUploadResponseList,
+    removeFile,
+  } = useSendAgentMessage({ refetch });
 
   const { visible, hideModal, documentId, selectedChunk, clickDocumentButton } =
     useClickDrawer();
   useGetFileIcon();
   const { data: userInfo } = useFetchUserInfo();
-  const { data: canvasInfo } = useFetchAgent();
+  const { id: canvasId } = useParams();
+  const { uploadAgentFile, loading } = useUploadAgentFileWithProgress();
+
+  const { buildInputList, handleOk, isWaitting } = useAwaitCompentData({
+    derivedMessages,
+    sendFormMessage,
+    canvasId: canvasId as string,
+  });
+
+  const { setDerivedMessages } = useContext(AgentChatContext);
+  setDerivedMessages?.(derivedMessages);
+
+  const isTaskMode = useIsTaskMode();
+
+  const handleUploadFile: NonNullable<FileUploadProps['onUpload']> =
+    useCallback(
+      async (files, options) => {
+        const ret = await uploadAgentFile({ files, options });
+        appendUploadResponseList(ret.data, files);
+      },
+      [appendUploadResponseList, uploadAgentFile],
+    );
 
   return (
     <>
-      <section className="flex flex-1 flex-col pl-5 h-[90vh]">
-        <div className="flex-1 ">
+      <section className="flex flex-1 flex-col px-5 min-h-0 pb-4">
+        <div className="flex-1 overflow-auto" ref={messageContainerRef}>
           <div>
-            <Spin spinning={loading}>
-              {derivedMessages?.map((message, i) => {
-                return (
-                  <MessageItem
-                    loading={
-                      message.role === MessageType.Assistant &&
-                      sendLoading &&
-                      derivedMessages.length - 1 === i
-                    }
-                    key={buildMessageUuidWithRole(message)}
-                    nickname={userInfo.nickname}
-                    avatar={userInfo.avatar}
-                    avatarDialog={canvasInfo.avatar}
-                    item={message}
-                    reference={buildMessageItemReference(
-                      { message: derivedMessages, reference },
-                      message,
+            {!sendLoading && <div data-testid="agent-run-idle" />}
+            {/* <Spin spinning={sendLoading}> */}
+            {derivedMessages?.map((message, i) => {
+              return (
+                <MessageItem
+                  loading={
+                    message.role === MessageType.Assistant &&
+                    sendLoading &&
+                    derivedMessages.length - 1 === i
+                  }
+                  key={buildMessageUuidWithRole(message)}
+                  nickname={userInfo.nickname}
+                  avatar={userInfo.avatar}
+                  avatarDialog={canvasInfo.avatar}
+                  item={message}
+                  reference={findReferenceByMessageId(message.id)}
+                  clickDocumentButton={clickDocumentButton}
+                  index={i}
+                  showLikeButton={false}
+                  sendLoading={sendLoading}
+                >
+                  {message.role === MessageType.Assistant &&
+                    derivedMessages.length - 1 === i && (
+                      <DebugContent
+                        parameters={buildInputList(message)}
+                        message={message}
+                        ok={handleOk(message)}
+                        isNext={false}
+                        btnText={'Submit'}
+                      ></DebugContent>
                     )}
-                    clickDocumentButton={clickDocumentButton}
-                    index={i}
-                    showLikeButton={false}
-                    sendLoading={sendLoading}
-                  ></MessageItem>
-                );
-              })}
-            </Spin>
+                  {message.role === MessageType.Assistant &&
+                    derivedMessages.length - 1 !== i && (
+                      <div>
+                        <MarkdownContent
+                          content={message?.data?.tips}
+                          loading={false}
+                        ></MarkdownContent>
+                        <div>
+                          {buildInputList(message)?.map((item) => item.value)}
+                        </div>
+                      </div>
+                    )}
+                </MessageItem>
+              );
+            })}
+            {/* </Spin> */}
           </div>
-          <div ref={ref} />
+          <div ref={scrollRef} />
         </div>
-        <MessageInput
-          showUploadIcon={false}
-          value={value}
-          sendLoading={sendLoading}
-          disabled={false}
-          sendDisabled={sendLoading}
-          conversationId=""
-          onPressEnter={handlePressEnter}
-          onInputChange={handleInputChange}
-          stopOutputMessage={stopOutputMessage}
-        />
+        {isTaskMode || (
+          <NextMessageInput
+            value={value}
+            sendLoading={sendLoading}
+            disabled={isWaitting}
+            sendDisabled={sendLoading || isWaitting}
+            isUploading={loading || isWaitting}
+            resize="vertical"
+            onPressEnter={handlePressEnter}
+            onInputChange={handleInputChange}
+            stopOutputMessage={stopOutputMessage}
+            onUpload={handleUploadFile}
+            removeFile={removeFile}
+            conversationId=""
+          />
+        )}
       </section>
-      <PdfDrawer
-        visible={visible}
-        hideModal={hideModal}
-        documentId={documentId}
-        chunk={selectedChunk}
-      ></PdfDrawer>
+      {visible && (
+        <PdfSheet
+          visible={visible}
+          hideModal={hideModal}
+          documentId={documentId}
+          chunk={selectedChunk}
+        ></PdfSheet>
+      )}
     </>
   );
-};
+}
 
-export default AgentChatBox;
+export default memo(AgentChatBox);

@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from operator import attrgetter
 
@@ -23,15 +24,16 @@ from ragflow_sdk import DataSet
 from utils import encode_avatar
 from utils.file_utils import create_image_file
 from utils.hypothesis_utils import valid_names
-
+from configs import DEFAULT_PARSER_CONFIG
+from utils.engine_utils import get_doc_engine
 
 class TestRquest:
     @pytest.mark.p2
     def test_payload_empty(self, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({})
-        assert "No properties were modified" in str(excinfo.value), str(excinfo.value)
+        assert "No properties were modified" in str(exception_info.value), str(exception_info.value)
 
 
 class TestCapability:
@@ -73,25 +75,25 @@ class TestDatasetUpdate:
     )
     def test_name_invalid(self, add_dataset_func, name, expected_message):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"name": name})
-        assert expected_message in str(excinfo.value), str(excinfo.value)
+        assert expected_message in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_name_duplicated(self, add_datasets_func):
         datasets = add_datasets_func
         name = "dataset_1"
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             datasets[0].update({"name": name})
-        assert f"Dataset name '{name}' already exists" in str(excinfo.value), str(excinfo.value)
+        assert f"Dataset name '{name}' already exists" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_name_case_insensitive(self, add_datasets_func):
         dataset = add_datasets_func[0]
         name = "DATASET_1"
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"name": name})
-        assert f"Dataset name '{name}' already exists" in str(excinfo.value), str(excinfo.value)
+        assert f"Dataset name '{name}' already exists" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p2
     def test_avatar(self, client, add_dataset_func, tmp_path):
@@ -104,12 +106,12 @@ class TestDatasetUpdate:
         retrieved_dataset = client.get_dataset(name=dataset.name)
         assert retrieved_dataset.avatar == avatar_data, str(retrieved_dataset)
 
-    @pytest.mark.p2
+    @pytest.mark.p3
     def test_avatar_exceeds_limit_length(self, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"avatar": "a" * 65536})
-        assert "String should have at most 65535 characters" in str(excinfo.value), str(excinfo.value)
+        assert "String should have at most 65535 characters" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     @pytest.mark.parametrize(
@@ -125,9 +127,9 @@ class TestDatasetUpdate:
     def test_avatar_invalid_prefix(self, add_dataset_func, tmp_path, avatar_prefix, expected_message):
         dataset = add_dataset_func
         fn = create_image_file(tmp_path / "ragflow_test.png")
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"avatar": f"{avatar_prefix}{encode_avatar(fn)}"})
-        assert expected_message in str(excinfo.value), str(excinfo.value)
+        assert expected_message in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_avatar_none(self, client, add_dataset_func):
@@ -147,12 +149,12 @@ class TestDatasetUpdate:
         retrieved_dataset = client.get_dataset(name=dataset.name)
         assert retrieved_dataset.description == "description", str(retrieved_dataset)
 
-    @pytest.mark.p2
+    @pytest.mark.p3
     def test_description_exceeds_limit_length(self, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"description": "a" * 65536})
-        assert "String should have at most 65535 characters" in str(excinfo.value), str(excinfo.value)
+        assert "String should have at most 65535 characters" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_description_none(self, client, add_dataset_func):
@@ -167,11 +169,10 @@ class TestDatasetUpdate:
     @pytest.mark.parametrize(
         "embedding_model",
         [
-            "BAAI/bge-large-zh-v1.5@BAAI",
-            "maidalun1020/bce-embedding-base_v1@Youdao",
+            "BAAI/bge-small-en-v1.5@Builtin",
             "embedding-3@ZHIPU-AI",
         ],
-        ids=["builtin_baai", "builtin_youdao", "tenant_zhipu"],
+        ids=["builtin_baai", "tenant_zhipu"],
     )
     def test_embedding_model(self, client, add_dataset_func, embedding_model):
         dataset = add_dataset_func
@@ -194,9 +195,9 @@ class TestDatasetUpdate:
     )
     def test_embedding_model_invalid(self, add_dataset_func, name, embedding_model):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"name": name, "embedding_model": embedding_model})
-        error_msg = str(excinfo.value)
+        error_msg = str(exception_info.value)
         if "tenant_no_auth" in name:
             assert error_msg == f"Unauthorized model: <{embedding_model}>", error_msg
         else:
@@ -206,42 +207,43 @@ class TestDatasetUpdate:
     @pytest.mark.parametrize(
         "name, embedding_model",
         [
-            ("missing_at", "BAAI/bge-large-zh-v1.5BAAI"),
-            ("missing_model_name", "@BAAI"),
-            ("missing_provider", "BAAI/bge-large-zh-v1.5@"),
-            ("whitespace_only_model_name", " @BAAI"),
-            ("whitespace_only_provider", "BAAI/bge-large-zh-v1.5@ "),
+            ("empty", ""),
+            ("space", " "),
+            ("missing_at", "BAAI/bge-small-en-v1.5Builtin"),
+            ("missing_model_name", "@Builtin"),
+            ("missing_provider", "BAAI/bge-small-en-v1.5@"),
+            ("whitespace_only_model_name", " @Builtin"),
+            ("whitespace_only_provider", "BAAI/bge-small-en-v1.5@ "),
         ],
-        ids=["missing_at", "empty_model_name", "empty_provider", "whitespace_only_model_name", "whitespace_only_provider"],
+        ids=["empty", "space", "missing_at", "empty_model_name", "empty_provider", "whitespace_only_model_name", "whitespace_only_provider"],
     )
     def test_embedding_model_format(self, add_dataset_func, name, embedding_model):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"name": name, "embedding_model": embedding_model})
-        error_msg = str(excinfo.value)
-        if name == "missing_at":
+        error_msg = str(exception_info.value)
+        if name in ["empty", "space", "missing_at"]:
             assert "Embedding model identifier must follow <model_name>@<provider> format" in error_msg, error_msg
         else:
             assert "Both model_name and provider must be non-empty strings" in error_msg, error_msg
 
     @pytest.mark.p2
-    def test_embedding_model_none(self, add_dataset_func):
+    def test_embedding_model_none(self, client, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
-            dataset.update({"embedding_model": None})
-        assert "Input should be a valid string" in str(excinfo.value), str(excinfo.value)
+        dataset.update({"embedding_model": None})
+        assert dataset.embedding_model == "BAAI/bge-small-en-v1.5@Builtin", str(dataset)
 
-    @pytest.mark.p1
+        retrieved_dataset = client.get_dataset(name=dataset.name)
+        assert retrieved_dataset.embedding_model == "BAAI/bge-small-en-v1.5@Builtin", str(retrieved_dataset)
+
+    @pytest.mark.p2
     @pytest.mark.parametrize(
         "permission",
         [
             "me",
             "team",
-            "ME",
-            "TEAM",
-            " ME ",
         ],
-        ids=["me", "team", "me_upercase", "team_upercase", "whitespace"],
+        ids=["me", "team"],
     )
     def test_permission(self, client, add_dataset_func, permission):
         dataset = add_dataset_func
@@ -258,21 +260,24 @@ class TestDatasetUpdate:
             "",
             "unknown",
             list(),
+            "ME",
+            "TEAM",
+            " ME ",
         ],
-        ids=["empty", "unknown", "type_error"],
+        ids=["empty", "unknown", "type_error", "me_upercase", "team_upercase", "whitespace"],
     )
     def test_permission_invalid(self, add_dataset_func, permission):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"permission": permission})
-        assert "Input should be 'me' or 'team'" in str(excinfo.value), str(excinfo.value)
+        assert "Input should be 'me' or 'team'" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_permission_none(self, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"permission": None})
-        assert "Input should be 'me' or 'team'" in str(excinfo.value), str(excinfo.value)
+        assert "Input should be 'me' or 'team'" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p1
     @pytest.mark.parametrize(
@@ -313,26 +318,57 @@ class TestDatasetUpdate:
     )
     def test_chunk_method_invalid(self, add_dataset_func, chunk_method):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"chunk_method": chunk_method})
-        assert "Input should be 'naive', 'book', 'email', 'laws', 'manual', 'one', 'paper', 'picture', 'presentation', 'qa', 'table' or 'tag'" in str(excinfo.value), str(excinfo.value)
+        assert "Input should be 'naive', 'book', 'email', 'laws', 'manual', 'one', 'paper', 'picture', 'presentation', 'qa', 'table', 'tag' or 'resume'" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_chunk_method_none(self, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"chunk_method": None})
-        assert "Input should be 'naive', 'book', 'email', 'laws', 'manual', 'one', 'paper', 'picture', 'presentation', 'qa', 'table' or 'tag'" in str(excinfo.value), str(excinfo.value)
+        assert "Input should be 'naive', 'book', 'email', 'laws', 'manual', 'one', 'paper', 'picture', 'presentation', 'qa', 'table', 'tag' or 'resume'" in str(exception_info.value), str(exception_info.value)
 
+    @pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="#8208")
     @pytest.mark.p2
     @pytest.mark.parametrize("pagerank", [0, 50, 100], ids=["min", "mid", "max"])
     def test_pagerank(self, client, add_dataset_func, pagerank):
+        if get_doc_engine(client) == "infinity":
+            pytest.skip("#8208")
         dataset = add_dataset_func
         dataset.update({"pagerank": pagerank})
         assert dataset.pagerank == pagerank, str(dataset)
 
         retrieved_dataset = client.get_dataset(name=dataset.name)
         assert retrieved_dataset.pagerank == pagerank, str(retrieved_dataset)
+
+    @pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="#8208")
+    @pytest.mark.p2
+    def test_pagerank_set_to_0(self, client, add_dataset_func):
+        if get_doc_engine(client) == "infinity":
+            pytest.skip("#8208")
+        dataset = add_dataset_func
+        dataset.update({"pagerank": 50})
+        assert dataset.pagerank == 50, str(dataset)
+
+        retrieved_dataset = client.get_dataset(name=dataset.name)
+        assert retrieved_dataset.pagerank == 50, str(retrieved_dataset)
+
+        dataset.update({"pagerank": 0})
+        assert dataset.pagerank == 0, str(dataset)
+
+        retrieved_dataset = client.get_dataset(name=dataset.name)
+        assert retrieved_dataset.pagerank == 0, str(retrieved_dataset)
+
+    @pytest.mark.skipif(os.getenv("DOC_ENGINE") != "infinity", reason="#8208")
+    @pytest.mark.p2
+    def test_pagerank_infinity(self, client, add_dataset_func):
+        if get_doc_engine(client) != "infinity":
+            pytest.skip("#8208")
+        dataset = add_dataset_func
+        with pytest.raises(Exception) as exception_info:
+            dataset.update({"pagerank": 50})
+        assert "'pagerank' can only be set when doc_engine is elasticsearch" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p2
     @pytest.mark.parametrize(
@@ -345,16 +381,16 @@ class TestDatasetUpdate:
     )
     def test_pagerank_invalid(self, add_dataset_func, pagerank, expected_message):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"pagerank": pagerank})
-        assert expected_message in str(excinfo.value), str(excinfo.value)
+        assert expected_message in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p3
     def test_pagerank_none(self, add_dataset_func):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"pagerank": None})
-        assert "Input should be a valid integer" in str(excinfo.value), str(excinfo.value)
+        assert "Input should be a valid integer" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p1
     @pytest.mark.parametrize(
@@ -484,57 +520,57 @@ class TestDatasetUpdate:
         [
             ({"auto_keywords": -1}, "Input should be greater than or equal to 0"),
             ({"auto_keywords": 33}, "Input should be less than or equal to 32"),
-            ({"auto_keywords": 3.14}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"auto_keywords": "string"}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"auto_keywords": 3.14}, "Input should be a valid integer"),
+            ({"auto_keywords": "string"}, "Input should be a valid integer"),
             ({"auto_questions": -1}, "Input should be greater than or equal to 0"),
             ({"auto_questions": 11}, "Input should be less than or equal to 10"),
-            ({"auto_questions": 3.14}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"auto_questions": "string"}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"auto_questions": 3.14}, "Input should be a valid integer"),
+            ({"auto_questions": "string"}, "Input should be a valid integer"),
             ({"chunk_token_num": 0}, "Input should be greater than or equal to 1"),
             ({"chunk_token_num": 2049}, "Input should be less than or equal to 2048"),
-            ({"chunk_token_num": 3.14}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"chunk_token_num": "string"}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"chunk_token_num": 3.14}, "Input should be a valid integer"),
+            ({"chunk_token_num": "string"}, "Input should be a valid integer"),
             ({"delimiter": ""}, "String should have at least 1 character"),
-            ({"html4excel": "string"}, "Input should be a valid boolean, unable to interpret input"),
+            ({"html4excel": "string"}, "Input should be a valid boolean"),
             ({"tag_kb_ids": "1,2"}, "Input should be a valid list"),
             ({"tag_kb_ids": [1, 2]}, "Input should be a valid string"),
             ({"topn_tags": 0}, "Input should be greater than or equal to 1"),
             ({"topn_tags": 11}, "Input should be less than or equal to 10"),
-            ({"topn_tags": 3.14}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"topn_tags": "string"}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"topn_tags": 3.14}, "Input should be a valid integer"),
+            ({"topn_tags": "string"}, "Input should be a valid integer"),
             ({"filename_embd_weight": -1}, "Input should be greater than or equal to 0"),
             ({"filename_embd_weight": 1.1}, "Input should be less than or equal to 1"),
-            ({"filename_embd_weight": "string"}, "Input should be a valid number, unable to parse string as a number"),
+            ({"filename_embd_weight": "string"}, "Input should be a valid number"),
             ({"task_page_size": 0}, "Input should be greater than or equal to 1"),
-            ({"task_page_size": 3.14}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"task_page_size": "string"}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"task_page_size": 3.14}, "Input should be a valid integer"),
+            ({"task_page_size": "string"}, "Input should be a valid integer"),
             ({"pages": "1,2"}, "Input should be a valid list"),
             ({"pages": ["1,2"]}, "Input should be a valid list"),
-            ({"pages": [["string1", "string2"]]}, "Input should be a valid integer, unable to parse string as an integer"),
-            ({"graphrag": {"use_graphrag": "string"}}, "Input should be a valid boolean, unable to interpret input"),
+            ({"pages": [["string1", "string2"]]}, "Input should be a valid integer"),
+            ({"graphrag": {"use_graphrag": "string"}}, "Input should be a valid boolean"),
             ({"graphrag": {"entity_types": "1,2"}}, "Input should be a valid list"),
             ({"graphrag": {"entity_types": [1, 2]}}, "nput should be a valid string"),
             ({"graphrag": {"method": "unknown"}}, "Input should be 'light' or 'general'"),
             ({"graphrag": {"method": None}}, "Input should be 'light' or 'general'"),
-            ({"graphrag": {"community": "string"}}, "Input should be a valid boolean, unable to interpret input"),
-            ({"graphrag": {"resolution": "string"}}, "Input should be a valid boolean, unable to interpret input"),
-            ({"raptor": {"use_raptor": "string"}}, "Input should be a valid boolean, unable to interpret input"),
+            ({"graphrag": {"community": "string"}}, "Input should be a valid boolean"),
+            ({"graphrag": {"resolution": "string"}}, "Input should be a valid boolean"),
+            ({"raptor": {"use_raptor": "string"}}, "Input should be a valid boolean"),
             ({"raptor": {"prompt": ""}}, "String should have at least 1 character"),
             ({"raptor": {"prompt": " "}}, "String should have at least 1 character"),
             ({"raptor": {"max_token": 0}}, "Input should be greater than or equal to 1"),
             ({"raptor": {"max_token": 2049}}, "Input should be less than or equal to 2048"),
-            ({"raptor": {"max_token": 3.14}}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"raptor": {"max_token": "string"}}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"raptor": {"max_token": 3.14}}, "Input should be a valid integer"),
+            ({"raptor": {"max_token": "string"}}, "Input should be a valid integer"),
             ({"raptor": {"threshold": -0.1}}, "Input should be greater than or equal to 0"),
             ({"raptor": {"threshold": 1.1}}, "Input should be less than or equal to 1"),
-            ({"raptor": {"threshold": "string"}}, "Input should be a valid number, unable to parse string as a number"),
+            ({"raptor": {"threshold": "string"}}, "Input should be a valid number"),
             ({"raptor": {"max_cluster": 0}}, "Input should be greater than or equal to 1"),
             ({"raptor": {"max_cluster": 1025}}, "Input should be less than or equal to 1024"),
-            ({"raptor": {"max_cluster": 3.14}}, "Input should be a valid integer, got a number with a fractional par"),
-            ({"raptor": {"max_cluster": "string"}}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"raptor": {"max_cluster": 3.14}}, "Input should be a valid integer"),
+            ({"raptor": {"max_cluster": "string"}}, "Input should be a valid integer"),
             ({"raptor": {"random_seed": -1}}, "Input should be greater than or equal to 0"),
-            ({"raptor": {"random_seed": 3.14}}, "Input should be a valid integer, got a number with a fractional part"),
-            ({"raptor": {"random_seed": "string"}}, "Input should be a valid integer, unable to parse string as an integer"),
+            ({"raptor": {"random_seed": 3.14}}, "Input should be a valid integer"),
+            ({"raptor": {"random_seed": "string"}}, "Input should be a valid integer"),
             ({"delimiter": "a" * 65536}, "Parser config exceeds size limit (max 65,535 characters)"),
         ],
         ids=[
@@ -596,22 +632,16 @@ class TestDatasetUpdate:
     )
     def test_parser_config_invalid(self, add_dataset_func, parser_config, expected_message):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update({"parser_config": parser_config})
-        assert expected_message in str(excinfo.value), str(excinfo.value)
+        assert expected_message in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p2
     def test_parser_config_empty(self, client, add_dataset_func):
         dataset = add_dataset_func
         expected_config = DataSet.ParserConfig(
             client,
-            {
-                "chunk_token_num": 128,
-                "delimiter": r"\n",
-                "html4excel": False,
-                "layout_recognize": "DeepDOC",
-                "raptor": {"use_raptor": False},
-            },
+            DEFAULT_PARSER_CONFIG,
         )
         dataset.update({"parser_config": {}})
         assert str(dataset.parser_config) == str(expected_config), str(dataset)
@@ -624,13 +654,7 @@ class TestDatasetUpdate:
         dataset = add_dataset_func
         expected_config = DataSet.ParserConfig(
             client,
-            {
-                "chunk_token_num": 128,
-                "delimiter": r"\n",
-                "html4excel": False,
-                "layout_recognize": "DeepDOC",
-                "raptor": {"use_raptor": False},
-            },
+            DEFAULT_PARSER_CONFIG,
         )
         dataset.update({"parser_config": None})
         assert str(dataset.parser_config) == str(expected_config), str(dataset)
@@ -645,6 +669,9 @@ class TestDatasetUpdate:
             client,
             {
                 "raptor": {"use_raptor": False},
+                "graphrag": {"use_graphrag": False},
+                "image_context_size": 0,
+                "table_context_size": 0,
             },
         )
         dataset.update({"chunk_method": "qa", "parser_config": {}})
@@ -660,6 +687,9 @@ class TestDatasetUpdate:
             client,
             {
                 "raptor": {"use_raptor": False},
+                "graphrag": {"use_graphrag": False},
+                "image_context_size": 0,
+                "table_context_size": 0,
             },
         )
         dataset.update({"chunk_method": "qa"})
@@ -675,6 +705,9 @@ class TestDatasetUpdate:
             client,
             {
                 "raptor": {"use_raptor": False},
+                "graphrag": {"use_graphrag": False},
+                "image_context_size": 0,
+                "table_context_size": 0,
             },
         )
         dataset.update({"chunk_method": "qa", "parser_config": None})
@@ -703,9 +736,9 @@ class TestDatasetUpdate:
     )
     def test_field_unsupported(self, add_dataset_func, payload):
         dataset = add_dataset_func
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception) as exception_info:
             dataset.update(payload)
-        assert "Extra inputs are not permitted" in str(excinfo.value), str(excinfo.value)
+        assert "Extra inputs are not permitted" in str(exception_info.value), str(exception_info.value)
 
     @pytest.mark.p2
     def test_field_unset(self, client, add_dataset_func):

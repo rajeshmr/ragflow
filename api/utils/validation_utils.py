@@ -1,5 +1,5 @@
 #
-#  Copyright 2025 The InfiniFlow Authors. All Rights Reserved.
+#  Copyright 2026 The InfiniFlow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -13,21 +13,28 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import logging
+import math
+import pathlib
+import re
 from collections import Counter
-from enum import auto
-from typing import Annotated, Any
+import string
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from flask import Request
-from pydantic import BaseModel, Field, StringConstraints, ValidationError, field_validator
+from quart import Request
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator, ValidationInfo
 from pydantic_core import PydanticCustomError
-from strenum import StrEnum
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
-from api.constants import DATASET_NAME_LIMIT
+from api.constants import DATASET_NAME_LIMIT, FILE_NAME_LEN_LIMIT
+from api.db import FileType
+from common.constants import RetCode
 
 
-def validate_and_parse_json_request(request: Request, validator: type[BaseModel], *, extras: dict[str, Any] | None = None, exclude_unset: bool = False) -> tuple[dict[str, Any] | None, str | None]:
+async def validate_and_parse_json_request(
+    request: Request, validator: type[BaseModel], *, extras: dict[str, Any] | None = None, exclude_unset: bool = False
+) -> tuple[dict[str, Any] | None, str | None]:
     """
     Validates and parses JSON requests through a multi-stage validation pipeline.
 
@@ -75,8 +82,10 @@ def validate_and_parse_json_request(request: Request, validator: type[BaseModel]
         2. Extra fields added via `extras` parameter are automatically removed
            from the final output after validation
     """
+    if request.mimetype != "application/json":
+        return None, f"Unsupported content type: Expected application/json, got {request.content_type}"
     try:
-        payload = request.get_json() or {}
+        payload = await request.get_json() or {}
     except UnsupportedMediaType:
         return None, f"Unsupported content type: Expected application/json, got {request.content_type}"
     except BadRequest:
@@ -151,6 +160,16 @@ def validate_and_parse_request_args(request: Request, validator: type[BaseModel]
         - Preserves type conversion from Pydantic validation
     """
     args = request.args.to_dict(flat=True)
+
+    # Handle ext parameter: parse JSON string to dict if it's a string
+    if "ext" in args and isinstance(args["ext"], str):
+        import json
+
+        try:
+            args["ext"] = json.loads(args["ext"])
+        except json.JSONDecodeError:
+            logging.debug("Failed to decode query arg 'ext' as JSON; passing raw value to validator")
+
     try:
         if extras is not None:
             args.update(extras)
@@ -307,38 +326,12 @@ def validate_uuid1_hex(v: Any) -> str:
         raise PydanticCustomError("invalid_UUID1_format", "Invalid UUID1 format")
 
 
-class PermissionEnum(StrEnum):
-    me = auto()
-    team = auto()
-
-
-class ChunkMethodnEnum(StrEnum):
-    naive = auto()
-    book = auto()
-    email = auto()
-    laws = auto()
-    manual = auto()
-    one = auto()
-    paper = auto()
-    picture = auto()
-    presentation = auto()
-    qa = auto()
-    table = auto()
-    tag = auto()
-
-
-class GraphragMethodEnum(StrEnum):
-    light = auto()
-    general = auto()
-
-
 class Base(BaseModel):
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class RaptorConfig(Base):
-    use_raptor: bool = Field(default=False)
+    use_raptor: Annotated[bool, Field(default=False)]
     prompt: Annotated[
         str,
         StringConstraints(strip_whitespace=True, min_length=1),
@@ -346,47 +339,142 @@ class RaptorConfig(Base):
             default="Please summarize the following paragraphs. Be careful with the numbers, do not make things up. Paragraphs as following:\n      {cluster_content}\nThe above is the content you need to summarize."
         ),
     ]
-    max_token: int = Field(default=256, ge=1, le=2048)
-    threshold: float = Field(default=0.1, ge=0.0, le=1.0)
-    max_cluster: int = Field(default=64, ge=1, le=1024)
-    random_seed: int = Field(default=0, ge=0)
+    max_token: Annotated[int, Field(default=256, ge=1, le=2048)]
+    threshold: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)]
+    max_cluster: Annotated[int, Field(default=64, ge=1, le=1024)]
+    random_seed: Annotated[int, Field(default=0, ge=0)]
+    scope: Annotated[Literal["file", "dataset"], Field(default="file")]
+    auto_disable_for_structured_data: Annotated[bool, Field(default=True)]
+    ext: Annotated[dict, Field(default={})]
 
 
 class GraphragConfig(Base):
-    use_graphrag: bool = Field(default=False)
-    entity_types: list[str] = Field(default_factory=lambda: ["organization", "person", "geo", "event", "category"])
-    method: GraphragMethodEnum = Field(default=GraphragMethodEnum.light)
-    community: bool = Field(default=False)
-    resolution: bool = Field(default=False)
+    use_graphrag: Annotated[bool, Field(default=False)]
+    entity_types: Annotated[list[str], Field(default_factory=lambda: ["organization", "person", "geo", "event", "category"])]
+    method: Annotated[Literal["light", "general"], Field(default="light")]
+    community: Annotated[bool, Field(default=False)]
+    resolution: Annotated[bool, Field(default=False)]
+
+
+class ParentChildConfig(Base):
+    use_parent_child: Annotated[bool, Field(default=False)]
+    children_delimiter: Annotated[str, Field(default=r"\n", min_length=1)]
+
+
+class AutoMetadataField(Base):
+    """Schema for a single auto-metadata field configuration."""
+
+    key: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), Field(...)]
+    type: Annotated[Literal["string", "list", "time", "number"], Field(...)]
+    description: Annotated[str | None, Field(default=None, max_length=65535)]
+    enum: Annotated[list[str] | None, Field(default=None)]
+
+
+class AutoMetadataConfig(Base):
+    """Top-level auto-metadata configuration attached to a dataset."""
+
+    metadata: Annotated[list[AutoMetadataField], Field(default_factory=list)]
+    built_in_metadata: Annotated[list[AutoMetadataField], Field(default_factory=list)]
 
 
 class ParserConfig(Base):
-    auto_keywords: int = Field(default=0, ge=0, le=32)
-    auto_questions: int = Field(default=0, ge=0, le=10)
-    chunk_token_num: int = Field(default=128, ge=1, le=2048)
-    delimiter: str = Field(default=r"\n", min_length=1)
-    graphrag: GraphragConfig | None = None
-    html4excel: bool = False
-    layout_recognize: str = "DeepDOC"
-    raptor: RaptorConfig | None = None
-    tag_kb_ids: list[str] = Field(default_factory=list)
-    topn_tags: int = Field(default=1, ge=1, le=10)
-    filename_embd_weight: float | None = Field(default=None, ge=0.0, le=1.0)
-    task_page_size: int | None = Field(default=None, ge=1)
-    pages: list[list[int]] | None = None
+    auto_keywords: Annotated[int, Field(default=0, ge=0, le=32)]
+    auto_questions: Annotated[int, Field(default=0, ge=0, le=10)]
+    chunk_token_num: Annotated[int, Field(default=512, ge=1, le=2048)]
+    delimiter: Annotated[str, Field(default=r"\n", min_length=1)]
+    graphrag: Annotated[GraphragConfig, Field(default_factory=lambda: GraphragConfig(use_graphrag=False))]
+    html4excel: Annotated[bool, Field(default=False)]
+    layout_recognize: Annotated[str, Field(default="DeepDOC")]
+    parent_child: Annotated[ParentChildConfig, Field(default_factory=lambda: ParentChildConfig(use_parent_child=False))]
+    raptor: Annotated[RaptorConfig, Field(default_factory=lambda: RaptorConfig(use_raptor=False))]
+    tag_kb_ids: Annotated[list[str], Field(default_factory=list)]
+    topn_tags: Annotated[int, Field(default=1, ge=1, le=10)]
+    filename_embd_weight: Annotated[float | None, Field(default=0.1, ge=0.0, le=1.0)]
+    task_page_size: Annotated[int | None, Field(default=None, ge=1)]
+    pages: Annotated[list[list[int]] | None, Field(default=None)]
+    ext: Annotated[dict, Field(default={})]
+
+
+class UpdateDocumentReq(Base):
+    """
+    Request model for updating a document.
+
+    This model validates the request parameters for updating a document,
+    including name, chunk method, enabled status, and other metadata.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    name: Annotated[str | None, Field(default=None, max_length=65535)]
+    chunk_method: Annotated[str | None, Field(default=None, max_length=65535)]
+    pipeline_id: Annotated[str | None, Field(default=None, max_length=65535)]
+    enabled: Annotated[int | None, Field(default=None, ge=0, le=1)]
+    chunk_count: Annotated[int | None, Field(default=None, ge=0)]
+    token_count: Annotated[int | None, Field(default=None, ge=0)]
+    progress: Annotated[float | None, Field(default=None, ge=0.0, le=1.0)]
+    parser_config: Annotated[ParserConfig | None, Field(default=None)]
+    meta_fields: Annotated[dict | None, Field(default={})]
+
+    @field_validator("chunk_method", mode="after")
+    @classmethod
+    def validate_document_chunk_method(cls, chunk_method: str | None):
+        if chunk_method:
+            # Validate chunk method if present
+            valid_chunk_method = {"naive", "manual", "qa", "table", "paper", "book", "laws", "presentation", "picture", "one", "knowledge_graph", "email", "tag"}
+            if chunk_method not in valid_chunk_method:
+                raise PydanticCustomError("format_invalid", "`chunk_method` {chunk_method} doesn't exist", {"chunk_method": chunk_method})
+
+        return chunk_method
+
+    @field_validator("enabled", mode="after")
+    @classmethod
+    def validate_document_enabled(cls, enabled: str | None):
+        if enabled:
+            converted = int(enabled)
+            if converted < 0 or converted > 1:
+                raise PydanticCustomError("format_invalid", "`enabled` value invalid, only accept 0 or 1 but is {enabled}", {"enabled": enabled})
+
+        return enabled
+
+    @field_validator("meta_fields", mode="after")
+    @classmethod
+    def validate_document_meta_fields(cls, meta_fields: dict | None):
+        if meta_fields is None:
+            return None
+
+        if not isinstance(meta_fields, dict):
+            raise PydanticCustomError("format_invalid", "Only dictionary type supported")
+        for k, v in meta_fields.items():
+            if isinstance(v, list):
+                if not all(isinstance(i, (str, int, float)) for i in v):
+                    raise PydanticCustomError("format_invalid", "The type is not supported in list: {v}", {"v": v})
+            elif not isinstance(v, (str, int, float)):
+                raise PydanticCustomError("format_invalid", "The type is not supported: {v}", {"v": v})
+        return meta_fields
 
 
 class CreateDatasetReq(Base):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=DATASET_NAME_LIMIT), Field(...)]
-    avatar: str | None = Field(default=None, max_length=65535)
-    description: str | None = Field(default=None, max_length=65535)
-    embedding_model: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255), Field(default="", serialization_alias="embd_id")]
-    permission: PermissionEnum = Field(default=PermissionEnum.me, min_length=1, max_length=16)
-    chunk_method: ChunkMethodnEnum = Field(default=ChunkMethodnEnum.naive, min_length=1, max_length=32, serialization_alias="parser_id")
-    pagerank: int = Field(default=0, ge=0, le=100)
-    parser_config: ParserConfig | None = Field(default=None)
+    avatar: Annotated[str | None, Field(default=None, max_length=65535)]
+    description: Annotated[str | None, Field(default=None, max_length=65535)]
+    embedding_model: Annotated[str | None, Field(default=None, max_length=255, serialization_alias="embd_id")]
+    permission: Annotated[Literal["me", "team"], Field(default="me", min_length=1, max_length=16)]
+    parse_type: Annotated[int | None, Field(default=None, ge=0, le=64)]
+    pipeline_id: Annotated[str | None, Field(default=None, min_length=32, max_length=32, serialization_alias="pipeline_id")]
+    chunk_method: Annotated[str | None, Field(default=None, serialization_alias="parser_id")]
+    parser_config: Annotated[ParserConfig | None, Field(default=None)]
+    auto_metadata_config: Annotated[AutoMetadataConfig | None, Field(default=None)]
+    ext: Annotated[dict, Field(default={})]
 
-    @field_validator("avatar")
+    @field_validator("pipeline_id", mode="before")
+    @classmethod
+    def handle_pipeline_id(cls, v: str | None, info: ValidationInfo):
+        if v is None:
+            return v
+        if info.data.get("parse_type", 0) == 1:
+            v = None
+        return v
+
+    @field_validator("avatar", mode="after")
     @classmethod
     def validate_avatar_base64(cls, v: str | None) -> str | None:
         """
@@ -436,9 +524,17 @@ class CreateDatasetReq(Base):
         else:
             raise PydanticCustomError("format_invalid", "Missing MIME prefix. Expected format: data:<mime>;base64,<data>")
 
+    @field_validator("embedding_model", mode="before")
+    @classmethod
+    def normalize_embedding_model(cls, v: Any) -> Any:
+        """Normalize embedding model string by stripping whitespace"""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
     @field_validator("embedding_model", mode="after")
     @classmethod
-    def validate_embedding_model(cls, v: str) -> str:
+    def validate_embedding_model(cls, v: str | None) -> str | None:
         """
         Validates embedding model identifier format compliance.
 
@@ -465,22 +561,23 @@ class CreateDatasetReq(Base):
             Invalid: "@openai" (empty model_name)
             Invalid: "text-embedding-3-large@" (empty provider)
         """
-        if "@" not in v:
-            raise PydanticCustomError("format_invalid", "Embedding model identifier must follow <model_name>@<provider> format")
+        if isinstance(v, str):
+            if "@" not in v:
+                raise PydanticCustomError("format_invalid", "Embedding model identifier must follow <model_name>@<provider> format")
 
-        components = v.split("@", 1)
-        if len(components) != 2 or not all(components):
-            raise PydanticCustomError("format_invalid", "Both model_name and provider must be non-empty strings")
+            components = v.split("@", 1)
+            if len(components) != 2 or not all(components):
+                raise PydanticCustomError("format_invalid", "Both model_name and provider must be non-empty strings")
 
-        model_name, provider = components
-        if not model_name.strip() or not provider.strip():
-            raise PydanticCustomError("format_invalid", "Model name and provider cannot be whitespace-only strings")
+            model_name, provider = components
+            if not model_name.strip() or not provider.strip():
+                raise PydanticCustomError("format_invalid", "Model name and provider cannot be whitespace-only strings")
         return v
 
-    @field_validator("permission", mode="before")
-    @classmethod
-    def normalize_permission(cls, v: Any) -> Any:
-        return normalize_str(v)
+    # @field_validator("permission", mode="before")
+    # @classmethod
+    # def normalize_permission(cls, v: Any) -> Any:
+    #     return normalize_str(v)
 
     @field_validator("parser_config", mode="before")
     @classmethod
@@ -535,10 +632,100 @@ class CreateDatasetReq(Base):
             raise PydanticCustomError("string_too_long", "Parser config exceeds size limit (max 65,535 characters). Current size: {actual}", {"actual": len(json_str)})
         return v
 
+    @field_validator("pipeline_id", mode="after")
+    @classmethod
+    def validate_pipeline_id(cls, v: str | None) -> str | None:
+        """Validate pipeline_id as 32-char lowercase hex string if provided.
+
+        Rules:
+        - None or empty string: treat as None (not set)
+        - Must be exactly length 32
+        - Must contain only hex digits (0-9a-fA-F); normalized to lowercase
+        """
+        if v is None:
+            return None
+        if v == "":
+            return None
+        if len(v) != 32:
+            raise PydanticCustomError("format_invalid", "pipeline_id must be 32 hex characters")
+        if any(ch not in string.hexdigits for ch in v):
+            raise PydanticCustomError("format_invalid", "pipeline_id must be hexadecimal")
+        return v.lower()
+
+    @model_validator(mode="after")
+    def validate_parser_dependency(self) -> "CreateDatasetReq":
+        """
+        Mixed conditional validation:
+        - If parser_id is omitted (field not set):
+            * If both parse_type and pipeline_id are omitted → default chunk_method = "naive"
+            * If both parse_type and pipeline_id are provided → allow ingestion pipeline mode
+        - If parser_id is provided (valid enum) → parse_type and pipeline_id must be None (disallow mixed usage)
+
+        Raises:
+            PydanticCustomError with code 'dependency_error' on violation.
+        """
+        # Omitted chunk_method (not in fields) logic
+        if self.chunk_method is None and "chunk_method" not in self.model_fields_set:
+            # All three absent → default naive
+            if self.parse_type is None and self.pipeline_id is None:
+                object.__setattr__(self, "chunk_method", "naive")
+                return self
+            # parser_id omitted: require BOTH parse_type & pipeline_id present (no partial allowed)
+            if self.parse_type is None or self.pipeline_id is None:
+                missing = []
+                if self.parse_type is None:
+                    missing.append("parse_type")
+                if self.pipeline_id is None:
+                    missing.append("pipeline_id")
+                raise PydanticCustomError(
+                    "dependency_error",
+                    "parser_id omitted → required fields missing: {fields}",
+                    {"fields": ", ".join(missing)},
+                )
+            # Both provided → allow pipeline mode
+            return self
+
+        # parser_id provided (valid): parse_type MUST be one of [None, 1], and MUST NOT have pipeline_id
+        if isinstance(self.chunk_method, str):
+            invalid = []
+            if self.parse_type not in [None, 1] or self.pipeline_id is not None:
+                if self.parse_type not in [None, 1]:
+                    invalid.append("parse_type")
+                if self.pipeline_id is not None:
+                    invalid.append("pipeline_id")
+                raise PydanticCustomError(
+                    "dependency_error",
+                    "parser_id provided → disallowed fields present: {fields}",
+                    {"fields": ", ".join(invalid)},
+                )
+        return self
+
+    @field_validator("chunk_method", mode="wrap")
+    @classmethod
+    def validate_chunk_method(cls, v: Any, handler, info: ValidationInfo) -> Any:
+        """Wrap validation to unify error messages, including type errors (e.g. list)."""
+        allowed = {"naive", "book", "email", "laws", "manual", "one", "paper", "picture", "presentation", "qa", "table", "tag", "resume"}
+        error_msg = "Input should be 'naive', 'book', 'email', 'laws', 'manual', 'one', 'paper', 'picture', 'presentation', 'qa', 'table', 'tag' or 'resume'"
+        try:
+            # Run inner validation (type checking)
+            result = handler(v)
+        except Exception:
+            raise PydanticCustomError("literal_error", error_msg)
+            # Omitted field: handler won't be invoked (wrap still gets value); None treated as explicit invalid
+        if not result and not info.data.get("pipeline_id", None):
+            raise PydanticCustomError("literal_error", error_msg)
+        # After handler, enforce enumeration
+        if result and result not in allowed:
+            raise PydanticCustomError("literal_error", error_msg)
+        return result
+
 
 class UpdateDatasetReq(CreateDatasetReq):
-    dataset_id: str = Field(...)
+    dataset_id: Annotated[str, Field(...)]
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=DATASET_NAME_LIMIT), Field(default="")]
+    pagerank: Annotated[int, Field(default=0, ge=0, le=100)]
+    language: Annotated[str | None, Field(default=None, max_length=32)]
+    connectors: Annotated[list[dict[str, Any]], Field(default_factory=list)]
 
     @field_validator("dataset_id", mode="before")
     @classmethod
@@ -547,7 +734,8 @@ class UpdateDatasetReq(CreateDatasetReq):
 
 
 class DeleteReq(Base):
-    ids: list[str] | None = Field(...)
+    ids: Annotated[list[str] | None, Field(default=None)]
+    delete_all: Annotated[bool, Field(default=False)]
 
     @field_validator("ids", mode="after")
     @classmethod
@@ -626,28 +814,166 @@ class DeleteReq(Base):
 class DeleteDatasetReq(DeleteReq): ...
 
 
-class OrderByEnum(StrEnum):
-    create_time = auto()
-    update_time = auto()
+class SearchDatasetReq(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), Field(...)]
+    doc_ids: Annotated[list[str], Field(default=[])]
+    page: Annotated[int, Field(default=1, ge=1)]
+    size: Annotated[int, Field(default=30, ge=1)]
+    top_k: Annotated[int, Field(default=1024, ge=1)]
+    similarity_threshold: Annotated[float, Field(default=0.0, ge=0.0, le=1.0)]
+    vector_similarity_weight: Annotated[float, Field(default=0.3, ge=0.0, le=1.0)]
+    use_kg: Annotated[bool, Field(default=False)]
+    cross_languages: Annotated[list[str], Field(default=[])]
+    keyword: Annotated[bool, Field(default=False)]
+    search_id: Annotated[str | None, Field(default=None)]
+    rerank_id: Annotated[str | None, Field(default=None)]
+    tenant_rerank_id: Annotated[str | None, Field(default=None)]
+    meta_data_filter: Annotated[dict | None, Field(default=None)]
 
 
-class BaseListReq(Base):
-    id: str | None = None
-    name: str | None = None
-    page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=30, ge=1)
-    orderby: OrderByEnum = Field(default=OrderByEnum.create_time)
-    desc: bool = Field(default=True)
+class DeleteDocumentReq(DeleteReq): ...
+
+
+class BaseListReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[str | None, Field(default=None)]
+    name: Annotated[str | None, Field(default=None)]
+    page: Annotated[int, Field(default=1, ge=1)]
+    page_size: Annotated[int, Field(default=30, ge=1)]
+    orderby: Annotated[Literal["create_time", "update_time"], Field(default="create_time")]
+    desc: Annotated[bool, Field(default=True)]
 
     @field_validator("id", mode="before")
     @classmethod
     def validate_id(cls, v: Any) -> str:
         return validate_uuid1_hex(v)
 
-    @field_validator("orderby", mode="before")
-    @classmethod
-    def normalize_orderby(cls, v: Any) -> Any:
-        return normalize_str(v)
+
+class ListDatasetReq(BaseListReq):
+    include_parsing_status: Annotated[bool, Field(default=False)]
+    ext: Annotated[dict, Field(default={})]
 
 
-class ListDatasetReq(BaseListReq): ...
+# ---- File Management Request Models ----
+
+
+class CreateFolderReq(Base):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), Field(...)]
+    parent_id: Annotated[str | None, Field(default=None)]
+    type: Annotated[str | None, Field(default=None)]
+
+
+class DeleteFileReq(Base):
+    ids: Annotated[list[str], Field(min_length=1)]
+
+
+class MoveFileReq(Base):
+    src_file_ids: Annotated[list[str], Field(min_length=1)]
+    dest_file_id: Annotated[str | None, Field(default=None)]
+    new_name: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), Field(default=None)]
+
+    @model_validator(mode="after")
+    def check_operation(self):
+        if not self.dest_file_id and not self.new_name:
+            raise ValueError("At least one of dest_file_id or new_name must be provided")
+        if self.new_name and len(self.src_file_ids) > 1:
+            raise ValueError("new_name can only be used with a single file")
+        return self
+
+
+class ListFileReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parent_id: Annotated[str | None, Field(default=None)]
+    keywords: Annotated[str, Field(default="")]
+    page: Annotated[int, Field(default=1, ge=1)]
+    page_size: Annotated[int, Field(default=15, ge=1, le=100)]
+    orderby: Annotated[str, Field(default="create_time")]
+    desc: Annotated[bool, Field(default=True)]
+
+
+def validate_immutable_fields(update_doc_req: UpdateDocumentReq, doc):
+    """
+    Validate that immutable fields have not been changed.
+
+    Checks that fields like chunk_count, token_count, and progress
+    cannot be modified directly by the user.
+
+    Args:
+        update_doc_req: The validated update document request.
+        doc: The document model from the database.
+
+    Returns:
+        A tuple of (error_message, error_code) if validation fails,
+        or (None, None) if validation passes.
+    """
+    if update_doc_req.chunk_count and update_doc_req.chunk_count != int(getattr(doc, "chunk_num", -1)):
+        return "Can't change `chunk_count`.", RetCode.DATA_ERROR
+
+    if update_doc_req.token_count and update_doc_req.token_count != int(getattr(doc, "token_num", -1)):
+        return "Can't change `token_count`.", RetCode.DATA_ERROR
+
+    if update_doc_req.progress:
+        progress_from_db = float(getattr(doc, "progress", -1.0))
+        # should not use "==" to compare two float values
+        if not math.isclose(update_doc_req.progress, progress_from_db):
+            return "Can't change `progress`.", RetCode.DATA_ERROR
+
+    return None, None
+
+
+def validate_document_name(req_doc_name: str, doc, docs_from_name):
+    """
+    Validate document name update.
+
+    Checks that the new document name is valid:
+    - Must be a string
+    - Must not exceed the file name length limit
+    - File extension cannot be changed
+    - Must not duplicate an existing document name in the same dataset.
+
+    Args:
+        req_doc_name: The new document name to validate.
+        doc: The document model from the database.
+        docs_from_name: Query result for documents with the new name.
+
+    Returns:
+        A tuple of (error_message, error_code) if validation fails,
+        or (None, None) if validation passes.
+    """
+    if not isinstance(req_doc_name, str):
+        return f"AttributeError('{type(req_doc_name).__name__}' object has no attribute 'encode')", RetCode.EXCEPTION_ERROR
+    if len(req_doc_name.encode("utf-8")) > FILE_NAME_LEN_LIMIT:
+        return f"File name must be {FILE_NAME_LEN_LIMIT} bytes or less.", RetCode.ARGUMENT_ERROR
+    if pathlib.Path(req_doc_name.lower()).suffix != pathlib.Path(doc.name.lower()).suffix:
+        return "The extension of file can't be changed", RetCode.ARGUMENT_ERROR
+
+    for d in docs_from_name:
+        if d.name == req_doc_name:
+            return "Duplicated document name in the same dataset.", RetCode.DATA_ERROR
+    return None, None
+
+
+def validate_chunk_method(doc, chunk_method=None):
+    """
+    Validate chunk method update.
+
+    Checks if the chunk method is valid for the given document,
+    particularly for visual documents or specific file types.
+
+    Args:
+        doc: The document model from the database.
+        chunk_method: The chunk method to validate.
+
+    Returns:
+        A tuple of (error_message, error_code) if validation fails,
+        or (None, None) if validation passes.
+    """
+    if chunk_method is not None and len(chunk_method) == 0:  # will not be detected in UpdateDocumentReq
+        return "`chunk_method` (empty string) is not valid", RetCode.DATA_ERROR
+    if doc.type == FileType.VISUAL or re.search(r"\.(ppt|pptx|pages)$", doc.name):
+        return "Not supported yet!", RetCode.DATA_ERROR
+    return None, None

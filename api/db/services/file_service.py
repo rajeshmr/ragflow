@@ -13,24 +13,36 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import asyncio
+import base64
 import logging
-import os
 import re
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Union
 
-from flask_login import current_user
+logger = logging.getLogger(__name__)
+
+import xxhash
 from peewee import fn
 
-from api.db import KNOWLEDGEBASE_FOLDER_NAME, FileSource, FileType, ParserType
-from api.db.db_models import DB, Document, File, File2Document, Knowledgebase
+from api.db import KNOWLEDGEBASE_FOLDER_NAME, FileType
+from api.db.db_models import DB, Document, File, File2Document, Knowledgebase, Task
 from api.db.services import duplicate_name
 from api.db.services.common_service import CommonService
 from api.db.services.document_service import DocumentService
 from api.db.services.file2document_service import File2DocumentService
-from api.utils import get_uuid
-from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img
-from rag.utils.storage_factory import STORAGE_IMPL
-from api.constants import FILE_NAME_LEN_LIMIT
+from common.misc_utils import get_uuid
+from common.ssrf_guard import assert_url_is_safe
+from common.constants import TaskStatus, FileSource, ParserType, MAXIMUM_PAGE_NUMBER
+from api.db.services.knowledgebase_service import KnowledgebaseService
+from api.db.services.task_service import TaskService
+from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img, sanitize_path
+from rag.llm.cv_model import GptV4
+from common import settings
+
 
 class FileService(CommonService):
     # Service class for managing file operations and storage
@@ -86,13 +98,13 @@ class FileService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_kb_id_by_file_id(cls, file_id):
-        # Get knowledge base IDs associated with a file
+        # Get dataset IDs associated with a file
         # Args:
         #     file_id: File ID
         # Returns:
-        #     List of dictionaries containing knowledge base IDs and names
+        #     List of dictionaries containing dataset IDs and names
         kbs = (
-            cls.model.select(*[Knowledgebase.id, Knowledgebase.name])
+            cls.model.select(*[Knowledgebase.id, Knowledgebase.name, File2Document.document_id])
             .join(File2Document, on=(File2Document.file_id == file_id))
             .join(Document, on=(File2Document.document_id == Document.id))
             .join(Knowledgebase, on=(Knowledgebase.id == Document.kb_id))
@@ -102,7 +114,7 @@ class FileService(CommonService):
             return []
         kbs_info_list = []
         for kb in list(kbs.dicts()):
-            kbs_info_list.append({"kb_id": kb["id"], "kb_name": kb["name"]})
+            kbs_info_list.append({"kb_id": kb["id"], "kb_name": kb["name"], "document_id": kb["document_id"]})
         return kbs_info_list
 
     @classmethod
@@ -162,7 +174,25 @@ class FileService(CommonService):
 
     @classmethod
     @DB.connection_context()
+    def get_all_file_ids_by_tenant_id(cls, tenant_id):
+        fields = [cls.model.id]
+        files = cls.model.select(*fields).where(cls.model.tenant_id == tenant_id)
+        files.order_by(cls.model.create_time.asc())
+        offset, limit = 0, 100
+        res = []
+        while True:
+            file_batch = files.offset(offset).limit(limit)
+            _temp = list(file_batch.dicts())
+            if not _temp:
+                break
+            res.extend(_temp)
+            offset += limit
+        return res
+
+    @classmethod
+    @DB.connection_context()
     def create_folder(cls, file, parent_id, name, count):
+        from api.apps import current_user
         # Recursively create folder structure
         # Args:
         #     file: Current file object
@@ -221,20 +251,23 @@ class FileService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_kb_folder(cls, tenant_id):
-        # Get knowledge base folder for tenant
+        # Get dataset folder for tenant
         # Args:
         #     tenant_id: Tenant ID
         # Returns:
         #     Knowledge base folder dictionary
-        for root in cls.model.select().where((cls.model.tenant_id == tenant_id), (cls.model.parent_id == cls.model.id)):
-            for folder in cls.model.select().where((cls.model.tenant_id == tenant_id), (cls.model.parent_id == root.id), (cls.model.name == KNOWLEDGEBASE_FOLDER_NAME)):
-                return folder.to_dict()
-        assert False, "Can't find the KB folder. Database init error."
+        root_folder = cls.get_root_folder(tenant_id)
+        root_id = root_folder["id"]
+        kb_folder = cls.model.select().where((cls.model.tenant_id == tenant_id), (cls.model.parent_id == root_id), (cls.model.name == KNOWLEDGEBASE_FOLDER_NAME)).first()
+        if not kb_folder:
+            kb_folder = cls.new_a_file_from_kb(tenant_id, KNOWLEDGEBASE_FOLDER_NAME, root_id)
+            return kb_folder
+        return kb_folder.to_dict()
 
     @classmethod
     @DB.connection_context()
     def new_a_file_from_kb(cls, tenant_id, name, parent_id, ty=FileType.FOLDER.value, size=0, location=""):
-        # Create a new file from knowledge base
+        # Create a new file from dataset
         # Args:
         #     tenant_id: Tenant ID
         #     name: File name
@@ -263,7 +296,7 @@ class FileService(CommonService):
     @classmethod
     @DB.connection_context()
     def init_knowledgebase_docs(cls, root_id, tenant_id):
-        # Initialize knowledge base documents
+        # Initialize dataset documents
         # Args:
         #     root_id: Root folder ID
         #     tenant_id: Tenant ID
@@ -305,7 +338,7 @@ class FileService(CommonService):
         current_id = start_id
         while current_id:
             e, file = cls.get_by_id(current_id)
-            if file.parent_id != file.id and e:
+            if e and file.parent_id != file.id:
                 parent_folders.append(file)
                 current_id = file.parent_id
             else:
@@ -399,55 +432,84 @@ class FileService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def upload_document(self, kb, file_objs, user_id):
+    def upload_document(self, kb, file_objs, user_id, src="local", parent_path: str | None = None):
         root_folder = self.get_root_folder(user_id)
         pf_id = root_folder["id"]
         self.init_knowledgebase_docs(pf_id, user_id)
         kb_root_folder = self.get_kb_folder(user_id)
         kb_folder = self.new_a_file_from_kb(kb.tenant_id, kb.name, kb_root_folder["id"])
 
+        safe_parent_path = sanitize_path(parent_path)
+
         err, files = [], []
         for file in file_objs:
+            doc_id = file.id if hasattr(file, "id") else get_uuid()
+            e, doc = DocumentService.get_by_id(doc_id)
+            if e:
+                try:
+                    if str(doc.kb_id) != str(kb.id):
+                        logging.warning(
+                            "Existing document id collision detected for %s: belongs to kb_id=%s, incoming kb_id=%s. "
+                            "Skipping update to avoid cross-KB overwrite.",
+                            doc_id,
+                            doc.kb_id,
+                            kb.id,
+                        )
+                        user_msg = "Existing document id collision with another knowledge base; skipping update."
+                        err.append(file.filename + ": " + user_msg)
+                        continue
+                    blob = file.read()
+                    new_hash = xxhash.xxh128(blob).hexdigest()
+                    old_hash = doc.content_hash or ""
+                    settings.STORAGE_IMPL.put(kb.id, doc.location, blob, kb.tenant_id)
+                    doc.size = len(blob)
+                    doc.content_hash = new_hash
+                    doc = doc.to_dict()
+                    DocumentService.update_by_id(doc["id"], doc)
+                    if new_hash != old_hash:
+                        files.append((doc, blob))
+                except Exception as exc:
+                    logging.exception(f"Failed to update document {doc_id}: {exc}")
+                    err.append(file.filename + ": " + str(exc))
+                continue
             try:
-                MAX_FILE_NUM_PER_USER = int(os.environ.get("MAX_FILE_NUM_PER_USER", 0))
-                if MAX_FILE_NUM_PER_USER > 0 and DocumentService.get_doc_count(kb.tenant_id) >= MAX_FILE_NUM_PER_USER:
-                    raise RuntimeError("Exceed the maximum file number of a free user!")
-                if len(file.filename.encode("utf-8")) >= FILE_NAME_LEN_LIMIT:
-                    raise RuntimeError("Exceed the maximum length of file name!")
-
+                DocumentService.check_doc_health(kb.tenant_id, file.filename)
                 filename = duplicate_name(DocumentService.query, name=file.filename, kb_id=kb.id)
                 filetype = filename_type(filename)
                 if filetype == FileType.OTHER.value:
                     raise RuntimeError("This type of file has not been supported yet!")
 
-                location = filename
-                while STORAGE_IMPL.obj_exist(kb.id, location):
+                location = filename if not safe_parent_path else f"{safe_parent_path}/{filename}"
+                while settings.STORAGE_IMPL.obj_exist(kb.id, location):
                     location += "_"
 
                 blob = file.read()
                 if filetype == FileType.PDF.value:
                     blob = read_potential_broken_pdf(blob)
-                STORAGE_IMPL.put(kb.id, location, blob)
+                settings.STORAGE_IMPL.put(kb.id, location, blob)
 
-                doc_id = get_uuid()
 
                 img = thumbnail_img(filename, blob)
                 thumbnail_location = ""
                 if img is not None:
                     thumbnail_location = f"thumbnail_{doc_id}.png"
-                    STORAGE_IMPL.put(kb.id, thumbnail_location, img)
+                    settings.STORAGE_IMPL.put(kb.id, thumbnail_location, img)
 
                 doc = {
                     "id": doc_id,
                     "kb_id": kb.id,
                     "parser_id": self.get_parser(filetype, filename, kb.parser_id),
+                    "pipeline_id": kb.pipeline_id,
                     "parser_config": kb.parser_config,
                     "created_by": user_id,
                     "type": filetype,
                     "name": filename,
+                    "source_type": src,
+                    "suffix": Path(filename).suffix.lstrip("."),
                     "location": location,
                     "size": len(blob),
                     "thumbnail": thumbnail_location,
+                    "content_hash": xxhash.xxh128(blob).hexdigest(),
                 }
                 DocumentService.insert(doc)
 
@@ -458,28 +520,45 @@ class FileService(CommonService):
 
         return err, files
 
+    @classmethod
+    @DB.connection_context()
+    def list_all_files_by_parent_id(cls, parent_id):
+        try:
+            files = cls.model.select().where((cls.model.parent_id == parent_id) & (cls.model.id != parent_id))
+            return list(files)
+        except Exception:
+            logging.exception("list_by_parent_id failed")
+            raise RuntimeError("Database error (list_by_parent_id)!")
+
     @staticmethod
     def parse_docs(file_objs, user_id):
+        exe = ThreadPoolExecutor(max_workers=12)
+        threads = []
+        for file in file_objs:
+            threads.append(exe.submit(FileService.parse, file.filename, file.read(), False))
+
+        res = []
+        for th in threads:
+            res.append(th.result())
+
+        return "\n\n".join(res)
+
+    @staticmethod
+    def parse(filename, blob, img_base64=True, tenant_id=None, layout_recognize=None):
         from rag.app import audio, email, naive, picture, presentation
+        from api.apps import current_user
 
         def dummy(prog=None, msg=""):
             pass
 
         FACTORY = {ParserType.PRESENTATION.value: presentation, ParserType.PICTURE.value: picture, ParserType.AUDIO.value: audio, ParserType.EMAIL.value: email}
-        parser_config = {"chunk_token_num": 16096, "delimiter": "\n!?;。；！？", "layout_recognize": "Plain Text"}
-        exe = ThreadPoolExecutor(max_workers=12)
-        threads = []
-        for file in file_objs:
-            kwargs = {"lang": "English", "callback": dummy, "parser_config": parser_config, "from_page": 0, "to_page": 100000, "tenant_id": user_id}
-            filetype = filename_type(file.filename)
-            blob = file.read()
-            threads.append(exe.submit(FACTORY.get(FileService.get_parser(filetype, file.filename, ""), naive).chunk, file.filename, blob, **kwargs))
-
-        res = []
-        for th in threads:
-            res.append("\n".join([ck["content_with_weight"] for ck in th.result()]))
-
-        return "\n\n".join(res)
+        parser_config = {"chunk_token_num": 16096, "delimiter": "\n!?;。；！？", "layout_recognize": layout_recognize or "Plain Text"}
+        kwargs = {"lang": "English", "callback": dummy, "parser_config": parser_config, "from_page": 0, "to_page": MAXIMUM_PAGE_NUMBER, "tenant_id": current_user.id if current_user else tenant_id}
+        file_type = filename_type(filename)
+        if img_base64 and file_type == FileType.VISUAL.value:
+            return GptV4.image2base64(blob)
+        cks = FACTORY.get(FileService.get_parser(filename_type(filename), filename, ""), naive).chunk(filename, blob, **kwargs)
+        return f"\n -----------------\nFile: {filename}\nContent as following: \n" + "\n".join([ck["content_with_weight"] for ck in cks])
 
     @staticmethod
     def get_parser(doc_type, filename, default):
@@ -489,7 +568,215 @@ class FileService(CommonService):
             return ParserType.AUDIO.value
         if re.search(r"\.(ppt|pptx|pages)$", filename):
             return ParserType.PRESENTATION.value
-        if re.search(r"\.(eml)$", filename):
+        if re.search(r"\.(msg|eml)$", filename):
             return ParserType.EMAIL.value
         return default
 
+    @staticmethod
+    def get_blob(user_id, location):
+        bname = f"{user_id}-downloads"
+        return settings.STORAGE_IMPL.get(bname, location)
+
+    @staticmethod
+    def put_blob(user_id, location, blob):
+        bname = f"{user_id}-downloads"
+        return settings.STORAGE_IMPL.put(bname, location, blob)
+
+    @classmethod
+    @DB.connection_context()
+    def delete_docs(cls, doc_ids, tenant_id):
+        root_folder = FileService.get_root_folder(tenant_id)
+        pf_id = root_folder["id"]
+        FileService.init_knowledgebase_docs(pf_id, tenant_id)
+        errors = ""
+        kb_table_num_map = {}
+        for doc_id in doc_ids:
+            try:
+                e, doc = DocumentService.get_by_id(doc_id)
+                if not e:
+                    raise Exception("Document not found!")
+                tenant_id = DocumentService.get_tenant_id(doc_id)
+                if not tenant_id:
+                    raise Exception("Tenant not found!")
+
+                b, n = File2DocumentService.get_storage_address(doc_id=doc_id)
+
+                TaskService.filter_delete([Task.doc_id == doc_id])
+                if not DocumentService.remove_document(doc, tenant_id):
+                    raise Exception("Database error (Document removal)!")
+
+                f2d = File2DocumentService.get_by_document_id(doc_id)
+                deleted_file_count = 0
+                if f2d:
+                    deleted_file_count = FileService.filter_delete([File.source_type == FileSource.KNOWLEDGEBASE, File.id == f2d[0].file_id])
+                File2DocumentService.delete_by_document_id(doc_id)
+                if deleted_file_count > 0:
+                    settings.STORAGE_IMPL.rm(b, n)
+
+                doc_parser = doc.parser_id
+                if doc_parser == ParserType.TABLE:
+                    kb_id = doc.kb_id
+                    if kb_id not in kb_table_num_map:
+                        counts = DocumentService.count_by_kb_id(kb_id=kb_id, keywords="", run_status=[TaskStatus.DONE], types=[])
+                        kb_table_num_map[kb_id] = counts
+                    kb_table_num_map[kb_id] -= 1
+                    if kb_table_num_map[kb_id] <= 0:
+                        KnowledgebaseService.delete_field_map(kb_id)
+            except Exception as e:
+                errors += str(e)
+
+        return errors
+
+    _ALLOWED_SCHEMES = {"http", "https"}
+
+    @staticmethod
+    def _validate_url_for_crawl(url: str) -> tuple[str, str]:
+        """Raise ValueError if the URL is not safe to crawl (SSRF guard).
+
+        Delegates to :func:`common.ssrf_guard.assert_url_is_safe`, which
+        validates the scheme, hostname, and every DNS-resolved address, and
+        returns ``(hostname, resolved_ip)`` for DNS pinning.
+
+        Only the scheme and host (and port when present) are forwarded to the
+        guard so that credentials or query parameters in *url* are never
+        written to the log.
+        """
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        port_suffix = f":{parsed.port}" if parsed.port else ""
+        redacted = f"{parsed.scheme}://{parsed.hostname}{port_suffix}"
+        return assert_url_is_safe(redacted, allowed_schemes=FileService._ALLOWED_SCHEMES)
+
+    @staticmethod
+    def upload_info(user_id, file, url: str|None=None):
+        def structured(filename, filetype, blob, content_type):
+            nonlocal user_id
+            if filetype == FileType.PDF.value:
+                blob = read_potential_broken_pdf(blob)
+
+            location = get_uuid()
+            FileService.put_blob(user_id, location, blob)
+
+            return {
+                "id": location,
+                "name": filename,
+                "size": sys.getsizeof(blob),
+                "extension": filename.split(".")[-1].lower(),
+                "mime_type": content_type,
+                "created_by": user_id,
+                "created_at": time.time(),
+                "preview_url": None
+            }
+
+        if url:
+            import requests as _requests
+            from urllib.parse import urljoin as _urljoin
+
+            _MAX_CRAWL_REDIRECTS = 10
+
+            # Pre-resolve the full redirect chain so that AsyncWebCrawler never
+            # follows a server-sent redirect to an unvalidated (potentially
+            # internal) host.  Each hop is SSRF-checked before being followed;
+            # the validated (hostname, ip) pairs are pinned via Chromium's
+            # --host-resolver-rules so the browser cannot re-resolve any of them
+            # through a fresh DNS query.
+            current_url = url
+            current_hostname, current_ip = FileService._validate_url_for_crawl(current_url)
+            # Accumulate MAP rules for every hostname we encounter in the chain.
+            host_pins: dict[str, str] = {current_hostname: current_ip}
+
+            for _ in range(_MAX_CRAWL_REDIRECTS):
+                try:
+                    _resp = _requests.get(
+                        current_url,
+                        timeout=10,
+                        allow_redirects=False,
+                    )
+                except _requests.RequestException as _exc:
+                    raise ValueError(f"Failed to fetch {current_url!r}: {_exc}") from _exc
+
+                if _resp.status_code not in (301, 302, 303, 307, 308):
+                    break
+
+                _location = _resp.headers.get("Location")
+                if not _location:
+                    break
+
+                _next_url = _urljoin(current_url, _location)
+                _next_hostname, _next_ip = FileService._validate_url_for_crawl(_next_url)
+                host_pins[_next_hostname] = _next_ip
+                current_url = _next_url
+            else:
+                raise ValueError(
+                    f"Exceeded {_MAX_CRAWL_REDIRECTS} redirects fetching {url!r}"
+                )
+
+            # Build a single MAP rule string covering every validated hostname
+            # in the redirect chain.  Chromium uses the pinned IP for each,
+            # skipping DNS entirely and eliminating the rebinding window.
+            _map_rules = ",".join(f"MAP {h} {ip}" for h, ip in host_pins.items())
+
+            from crawl4ai import (
+                AsyncWebCrawler,
+                BrowserConfig,
+                CrawlerRunConfig,
+                DefaultMarkdownGenerator,
+                PruningContentFilter,
+                CrawlResult
+            )
+            filename = re.sub(r"\?.*", "", url.split("/")[-1])
+            async def adownload():
+                browser_config = BrowserConfig(
+                    headless=True,
+                    verbose=False,
+                    extra_args=[f"--host-resolver-rules={_map_rules}"],
+                )
+                async with AsyncWebCrawler(config=browser_config) as crawler:
+                    crawler_config = CrawlerRunConfig(
+                        markdown_generator=DefaultMarkdownGenerator(
+                            content_filter=PruningContentFilter()
+                        ),
+                        pdf=True,
+                        screenshot=False
+                    )
+                    # Use the final resolved URL so the browser starts at the
+                    # redirect destination rather than re-following the chain.
+                    result: CrawlResult = await crawler.arun(
+                        url=current_url,
+                        config=crawler_config
+                    )
+                    return result
+            page = asyncio.run(adownload())
+            if page.pdf:
+                if filename.split(".")[-1].lower() != "pdf":
+                    filename += ".pdf"
+                return structured(filename, "pdf", page.pdf, page.response_headers["content-type"])
+
+            return structured(filename, "html", str(page.markdown).encode("utf-8"), page.response_headers["content-type"])
+
+        DocumentService.check_doc_health(user_id, file.filename)
+        return structured(file.filename, filename_type(file.filename), file.read(), file.content_type)
+
+    @staticmethod
+    def get_files(files: Union[None, list[dict]], raw: bool = False, layout_recognize: str = None) -> Union[list[str], tuple[list[str], list[dict]]]:
+        if not files:
+            return  []
+        def image_to_base64(file):
+            return "data:{};base64,{}".format(file["mime_type"],
+                                        base64.b64encode(FileService.get_blob(file["created_by"], file["id"])).decode("utf-8"))
+        exe = ThreadPoolExecutor(max_workers=5)
+        threads = []
+        imgs = []
+        for file in files:
+            if file["mime_type"].find("image") >=0:
+                if raw:
+                    imgs.append(FileService.get_blob(file["created_by"], file["id"]))
+                else:
+                    threads.append(exe.submit(image_to_base64, file))
+                continue
+            threads.append(exe.submit(FileService.parse, file["name"], FileService.get_blob(file["created_by"], file["id"]), True, file["created_by"], layout_recognize))
+    
+        if raw:
+            return [th.result() for th in threads], imgs
+        else:
+            return [th.result() for th in threads]

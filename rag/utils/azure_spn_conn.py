@@ -17,10 +17,17 @@
 import logging
 import os
 import time
-from rag import settings
-from rag.utils import singleton
+from common.decorator import singleton
 from azure.identity import ClientSecretCredential, AzureAuthorityHosts
 from azure.storage.filedatalake import FileSystemClient
+from common import settings
+
+_CLOUD_AUTHORITY_MAP = {
+    "public": AzureAuthorityHosts.AZURE_PUBLIC_CLOUD,
+    "china": AzureAuthorityHosts.AZURE_CHINA,
+    "government": AzureAuthorityHosts.AZURE_GOVERNMENT,
+    "germany": AzureAuthorityHosts.AZURE_GERMANY,
+}
 
 
 @singleton
@@ -32,6 +39,7 @@ class RAGFlowAzureSpnBlob:
         self.secret = os.getenv('SECRET', settings.AZURE["secret"])
         self.tenant_id = os.getenv('TENANT_ID', settings.AZURE["tenant_id"])
         self.container_name = os.getenv('CONTAINER_NAME', settings.AZURE["container_name"])
+        self.cloud = os.getenv('AZURE_CLOUD', settings.AZURE.get("cloud", "public")).lower()
         self.__open__()
 
     def __open__(self):
@@ -42,8 +50,11 @@ class RAGFlowAzureSpnBlob:
             pass
 
         try:
-            credentials = ClientSecretCredential(tenant_id=self.tenant_id, client_id=self.client_id, client_secret=self.secret, authority=AzureAuthorityHosts.AZURE_CHINA)
-            self.conn = FileSystemClient(account_url=self.account_url, file_system_name=self.container_name, credential=credentials)
+            authority = _CLOUD_AUTHORITY_MAP.get(self.cloud, AzureAuthorityHosts.AZURE_PUBLIC_CLOUD)
+            credentials = ClientSecretCredential(tenant_id=self.tenant_id, client_id=self.client_id,
+                                                 client_secret=self.secret, authority=authority)
+            self.conn = FileSystemClient(account_url=self.account_url, file_system_name=self.container_name,
+                                         credential=credentials)
         except Exception:
             logging.exception("Fail to connect %s" % self.account_url)
 
@@ -57,7 +68,7 @@ class RAGFlowAzureSpnBlob:
         f.append_data(binary, offset=0, length=len(binary))
         return f.flush_data(len(binary))
 
-    def put(self, bucket, fnm, binary):
+    def put(self, bucket, fnm, binary, tenant_id=None):
         for _ in range(3):
             try:
                 f = self.conn.create_file(fnm)
@@ -67,6 +78,8 @@ class RAGFlowAzureSpnBlob:
                 logging.exception(f"Fail put {bucket}/{fnm}")
                 self.__open__()
                 time.sleep(1)
+                return None
+        return None
 
     def rm(self, bucket, fnm):
         try:
@@ -84,7 +97,7 @@ class RAGFlowAzureSpnBlob:
                 logging.exception(f"fail get {bucket}/{fnm}")
                 self.__open__()
                 time.sleep(1)
-        return
+        return None
 
     def obj_exist(self, bucket, fnm):
         try:
@@ -102,4 +115,4 @@ class RAGFlowAzureSpnBlob:
                 logging.exception(f"fail get {bucket}/{fnm}")
                 self.__open__()
                 time.sleep(1)
-        return
+        return None

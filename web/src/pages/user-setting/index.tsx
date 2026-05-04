@@ -1,17 +1,17 @@
-import { Flex } from 'antd';
-import { Outlet } from 'umi';
-import SideBar from './sidebar';
+import { Outlet } from 'react-router';
+import { SideBar } from './sidebar';
 
-import styles from './index.less';
+import { cn } from '@/lib/utils';
 
 const UserSetting = () => {
   return (
-    <Flex className={styles.settingWrapper}>
-      <SideBar></SideBar>
-      <Flex flex={1} className={styles.outletWrapper}>
-        <Outlet></Outlet>
-      </Flex>
-    </Flex>
+    <section className="pt-8 size-full grid grid-cols-[auto_1fr] grid-rows-1">
+      <SideBar />
+
+      <div className={cn('pr-6 pb-6 flex flex-1 rounded-lg overflow-hidden')}>
+        <Outlet />
+      </div>
+    </section>
   );
 };
 

@@ -1,12 +1,22 @@
 export interface ITestRetrievalRequestBody {
   question: string;
   similarity_threshold: number;
-  keywords_similarity_weight: number;
+  vector_similarity_weight: number;
   rerank_id?: string;
   top_k?: number;
   use_kg?: boolean;
   highlight?: boolean;
   kb_id?: string[];
+  meta_data_filter?: {
+    logic?: string;
+    method?: string;
+    manual?: Array<{
+      key: string;
+      op: string;
+      value: string;
+    }>;
+    semi_auto?: string[];
+  };
 }
 
 export interface IFetchKnowledgeListRequestBody {
@@ -14,13 +24,19 @@ export interface IFetchKnowledgeListRequestBody {
 }
 
 export interface IFetchKnowledgeListRequestParams {
-  kb_id?: string;
-  keywords?: string;
+  id?: string;
   page?: number;
   page_size?: number;
+  ext?: {
+    keywords?: string;
+    owner_ids?: string[];
+    parser_id?: string;
+  };
 }
 
 export interface IFetchDocumentListRequestBody {
-  types?: string[];
+  suffix?: string[];
   run_status?: string[];
+  return_empty_metadata?: boolean;
+  metadata?: Record<string, string[]>;
 }

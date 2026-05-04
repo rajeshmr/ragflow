@@ -20,9 +20,55 @@ import pandas as pd
 from collections import Counter
 from rag.nlp import rag_tokenizer
 from io import BytesIO
-
+import logging
+from common.constants import MAXIMUM_PAGE_NUMBER
+from docx.image.exceptions import (
+    InvalidImageStreamError,
+    UnexpectedEndOfFileError,
+    UnrecognizedImageError,
+)
+from rag.utils.lazy_image import LazyImage
 
 class RAGFlowDocxParser:
+    def get_picture(self, document, paragraph):
+        imgs = paragraph._element.xpath(".//pic:pic")
+        if not imgs:
+            return None
+        image_blobs = []
+        for img in imgs:
+            embed = img.xpath(".//a:blip/@r:embed")
+            if not embed:
+                continue
+            embed = embed[0]
+            image_blob = None
+            try:
+                related_part = document.part.related_parts[embed]
+            except Exception as e:
+                logging.warning(f"Skipping image due to unexpected error getting related_part: {e}")
+                continue
+
+            try:
+                image = related_part.image
+                if image is not None:
+                    image_blob = image.blob
+            except (
+                UnrecognizedImageError,
+                UnexpectedEndOfFileError,
+                InvalidImageStreamError,
+                UnicodeDecodeError,
+            ) as e:
+                logging.info(f"Damaged image encountered, attempting blob fallback: {e}")
+            except Exception as e:
+                logging.warning(f"Unexpected error getting image, attempting blob fallback: {e}")
+
+            if image_blob is None:
+                image_blob = getattr(related_part, "blob", None)
+            if image_blob:
+                image_blobs.append(image_blob)
+        if not image_blobs:
+            return None
+        return LazyImage(image_blobs)
+
 
     def __extract_table_content(self, tb):
         df = []
@@ -33,7 +79,7 @@ class RAGFlowDocxParser:
     def __compose_table_content(self, df):
 
         def blockType(b):
-            patt = [
+            pattern = [
                 ("^(20|19)[0-9]{2}[年/-][0-9]{1,2}[月/-][0-9]{1,2}日*$", "Dt"),
                 (r"^(20|19)[0-9]{2}年$", "Dt"),
                 (r"^(20|19)[0-9]{2}[年/-][0-9]{1,2}月*$", "Dt"),
@@ -47,7 +93,7 @@ class RAGFlowDocxParser:
                 (r"^[0-9.,+-]+[0-9A-Za-z/$￥%<>（）()' -]+$", "NE"),
                 (r"^.{1}$", "Sg")
             ]
-            for p, n in patt:
+            for p, n in pattern:
                 if re.search(p, b):
                     return n
             tks = [t for t in rag_tokenizer.tokenize(b).split() if len(t) > 1]
@@ -69,7 +115,7 @@ class RAGFlowDocxParser:
         max_type = max(max_type.items(), key=lambda x: x[1])[0]
 
         colnm = len(df.iloc[0, :])
-        hdrows = [0]  # header is not nessesarily appear in the first line
+        hdrows = [0]  # header is not necessarily appear in the first line
         if max_type == "Nu":
             for r in range(1, len(df)):
                 tys = Counter([blockType(str(df.iloc[r, j]))
@@ -113,7 +159,7 @@ class RAGFlowDocxParser:
             return lines
         return ["\n".join(lines)]
 
-    def __call__(self, fnm, from_page=0, to_page=100000000):
+    def __call__(self, fnm, from_page=0, to_page=MAXIMUM_PAGE_NUMBER):
         self.doc = Document(fnm) if isinstance(
             fnm, str) else Document(BytesIO(fnm))
         pn = 0 # parsed page
