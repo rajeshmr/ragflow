@@ -27,7 +27,7 @@ es:
   hosts: 'https://${ES_HOST:-es01}:${ES_PORT:-9200}'
   username: '${ES_USER:-elastic}'
   password: '${ELASTIC_PASSWORD:-infini_rag_flow}'
-  api_key: '${ELASTIC_API_KEY:-infini_rag_flow}'
+  api_key: '${ELASTIC_API_KEY:-}'
 os:
   hosts: 'http://${OS_HOST:-opensearch01}:9201'
   username: '${OS_USER:-admin}'

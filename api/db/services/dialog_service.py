@@ -665,7 +665,11 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
                 kbinfos["chunks"] = retriever.retrieval_by_children(kbinfos["chunks"], tenant_ids)
             if use_web_search:
                 tav = Tavily(prompt_config["tavily_api_key"])
-                tav_res = tav.retrieve_chunks(" ".join(questions))
+                tav_res = tav.retrieve_chunks(
+                    " ".join(questions),
+                    include_domains=kwargs.get("include_domains"),
+                    exclude_domains=kwargs.get("exclude_domains"),
+                )
                 kbinfos["chunks"].extend(tav_res["chunks"])
                 kbinfos["doc_aggs"].extend(tav_res["doc_aggs"])
             if prompt_config.get("use_kg"):
