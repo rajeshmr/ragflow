@@ -8,9 +8,12 @@ WORKDIR /var/task
 # Lambda Python 3.12 base = Amazon Linux 2023; uses dnf, not yum.
 # python3-venv is no longer a separate package on AL2023 (venv is bundled
 # with python3); curl is available as curl-minimal already.
+# dnf5 (AL2023) dropped the `group` subcommand — install build essentials
+# explicitly instead of using the "Development Tools" group.
 RUN dnf update -y && \
-    dnf group install -y "Development Tools" && \
-    dnf install -y libicu-devel gcc-c++ python3-devel llvm-devel \
+    dnf install -y \
+        gcc gcc-c++ make autoconf automake libtool patch git \
+        libicu-devel python3-devel llvm-devel \
         libffi-devel openssl-devel \
         mesa-libGL unixODBC unixODBC-devel python3-pip && \
     dnf clean all && \
