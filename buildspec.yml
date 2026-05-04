@@ -1,0 +1,40 @@
+version: 0.2
+
+# CodeBuild spec for the v25 fork.
+# Builds two images and pushes both to 304975023707.dkr.ecr.us-east-1.amazonaws.com/ragflow:
+#   - :v25         -> Dockerfile.lambda (production AWS Lambda image)
+#   - :v25-slim    -> Dockerfile (HTTP server for local docker-compose testing)
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: us-east-1
+    AWS_ACCOUNT_ID: "304975023707"
+    ECR_REPO: ragflow
+    IMAGE_TAG: v25
+    DOCKER_BUILDKIT: "1"
+
+phases:
+  pre_build:
+    commands:
+      - echo "Build started on $(date)"
+      - REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPO
+      - echo "Logging in to ECR ${REPO_URI}..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - echo "Source commit $CODEBUILD_RESOLVED_SOURCE_VERSION"
+
+  build:
+    commands:
+      - echo "=== Building Lambda image (production) ==="
+      - docker build --build-arg LIGHTEN=1 -f Dockerfile.lambda -t $REPO_URI:$IMAGE_TAG .
+      - echo "=== Building slim image (local docker-compose testing) ==="
+      - docker build -f Dockerfile -t $REPO_URI:$IMAGE_TAG-slim .
+
+  post_build:
+    commands:
+      - echo "=== Pushing $REPO_URI:$IMAGE_TAG ==="
+      - docker push $REPO_URI:$IMAGE_TAG
+      - echo "=== Pushing $REPO_URI:$IMAGE_TAG-slim ==="
+      - docker push $REPO_URI:$IMAGE_TAG-slim
+      - echo "Build complete on $(date)"
+      - echo "Lambda image  -> $REPO_URI:$IMAGE_TAG"
+      - echo "Slim image    -> $REPO_URI:$IMAGE_TAG-slim"
