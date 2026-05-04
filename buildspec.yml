@@ -41,6 +41,22 @@ phases:
       - echo "=== Pre-pulling ubuntu:24.04 via public.ecr.aws mirror ==="
       - docker pull public.ecr.aws/ubuntu/ubuntu:24.04
       - docker tag public.ecr.aws/ubuntu/ubuntu:24.04 ubuntu:24.04
+      # Pre-pull infiniflow/ragflow_deps:latest with retries; the slim Dockerfile
+      # bind-mounts this image extensively. ~3GB, no public mirror available.
+      - echo "=== Pre-pulling infiniflow/ragflow_deps:latest (with retries) ==="
+      - |
+        for i in 1 2 3 4 5; do
+          if docker pull infiniflow/ragflow_deps:latest; then
+            echo "deps pull succeeded on attempt $i"
+            break
+          fi
+          echo "deps pull attempt $i failed; backing off..."
+          sleep $((i * 30))
+          if [ $i -eq 5 ]; then
+            echo "deps pull failed after 5 attempts; aborting slim build"
+            exit 1
+          fi
+        done
       # Same idempotency check for slim
       - SLIM_EXISTS=$(aws ecr describe-images --repository-name $ECR_REPO --region $AWS_DEFAULT_REGION --image-ids imageTag=$IMAGE_TAG-slim --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
       - |
