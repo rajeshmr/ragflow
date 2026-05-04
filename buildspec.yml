@@ -24,23 +24,45 @@ phases:
 
   build:
     commands:
-      - echo "=== Building Lambda image (production) ==="
-      - docker build --build-arg LIGHTEN=1 -f Dockerfile.lambda -t $REPO_URI:$IMAGE_TAG .
-      # Push Lambda image immediately so production has v25 even if the slim
-      # build below fails (Docker Hub rate-limits, etc).
-      - echo "=== Pushing $REPO_URI:$IMAGE_TAG (Lambda) ==="
-      - docker push $REPO_URI:$IMAGE_TAG
+      # ECR repo is IMMUTABLE — skip Lambda build/push if :v25 already exists.
+      # Saves ~6 min per iteration. To force rebuild: delete the v25 tag in ECR.
+      - LAMBDA_EXISTS=$(aws ecr describe-images --repository-name $ECR_REPO --region $AWS_DEFAULT_REGION --image-ids imageTag=$IMAGE_TAG --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
+      - |
+        if [ -n "$LAMBDA_EXISTS" ] && [ "$LAMBDA_EXISTS" != "None" ]; then
+          echo "=== Skipping Lambda build — $REPO_URI:$IMAGE_TAG already in ECR ($LAMBDA_EXISTS) ==="
+        else
+          echo "=== Building Lambda image (production) ==="
+          docker build --build-arg LIGHTEN=1 -f Dockerfile.lambda -t $REPO_URI:$IMAGE_TAG .
+          echo "=== Pushing $REPO_URI:$IMAGE_TAG (Lambda) ==="
+          docker push $REPO_URI:$IMAGE_TAG
+        fi
       # Pre-pull ubuntu:24.04 from ECR Public Gallery to dodge Docker Hub rate
       # limits (CodeBuild IPs are heavily shared and frequently throttled).
       - echo "=== Pre-pulling ubuntu:24.04 via public.ecr.aws mirror ==="
       - docker pull public.ecr.aws/ubuntu/ubuntu:24.04
       - docker tag public.ecr.aws/ubuntu/ubuntu:24.04 ubuntu:24.04
-      - echo "=== Building slim image (local docker-compose testing) ==="
-      - docker build -f Dockerfile -t $REPO_URI:$IMAGE_TAG-slim . || (echo "Slim build failed; Lambda image is already pushed" && exit 0)
+      # Same idempotency check for slim
+      - SLIM_EXISTS=$(aws ecr describe-images --repository-name $ECR_REPO --region $AWS_DEFAULT_REGION --image-ids imageTag=$IMAGE_TAG-slim --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
+      - |
+        if [ -n "$SLIM_EXISTS" ] && [ "$SLIM_EXISTS" != "None" ]; then
+          echo "=== Skipping slim build — $REPO_URI:$IMAGE_TAG-slim already in ECR ($SLIM_EXISTS) ==="
+        else
+          echo "=== Building slim image (local docker-compose testing) ==="
+          docker build -f Dockerfile -t $REPO_URI:$IMAGE_TAG-slim . || (echo "Slim build failed" && exit 1)
+        fi
 
   post_build:
     commands:
-      - if docker image inspect $REPO_URI:$IMAGE_TAG-slim >/dev/null 2>&1; then echo "=== Pushing $REPO_URI:$IMAGE_TAG-slim ==="; docker push $REPO_URI:$IMAGE_TAG-slim; else echo "Slim image not built; skipping push"; fi
+      - |
+        SLIM_EXISTS=$(aws ecr describe-images --repository-name $ECR_REPO --region $AWS_DEFAULT_REGION --image-ids imageTag=$IMAGE_TAG-slim --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
+        if [ -n "$SLIM_EXISTS" ] && [ "$SLIM_EXISTS" != "None" ]; then
+          echo "Slim image already in ECR ($SLIM_EXISTS); skipping push"
+        elif docker image inspect $REPO_URI:$IMAGE_TAG-slim >/dev/null 2>&1; then
+          echo "=== Pushing $REPO_URI:$IMAGE_TAG-slim ==="
+          docker push $REPO_URI:$IMAGE_TAG-slim
+        else
+          echo "Slim image not built; skipping push"
+        fi
       - echo "Build complete on $(date)"
       - echo "Lambda image  -> $REPO_URI:$IMAGE_TAG"
       - echo "Slim image    -> $REPO_URI:$IMAGE_TAG-slim (if built)"
