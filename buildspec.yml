@@ -26,15 +26,21 @@ phases:
     commands:
       - echo "=== Building Lambda image (production) ==="
       - docker build --build-arg LIGHTEN=1 -f Dockerfile.lambda -t $REPO_URI:$IMAGE_TAG .
+      # Push Lambda image immediately so production has v25 even if the slim
+      # build below fails (Docker Hub rate-limits, etc).
+      - echo "=== Pushing $REPO_URI:$IMAGE_TAG (Lambda) ==="
+      - docker push $REPO_URI:$IMAGE_TAG
+      # Pre-pull ubuntu:24.04 from ECR Public Gallery to dodge Docker Hub rate
+      # limits (CodeBuild IPs are heavily shared and frequently throttled).
+      - echo "=== Pre-pulling ubuntu:24.04 via public.ecr.aws mirror ==="
+      - docker pull public.ecr.aws/ubuntu/ubuntu:24.04
+      - docker tag public.ecr.aws/ubuntu/ubuntu:24.04 ubuntu:24.04
       - echo "=== Building slim image (local docker-compose testing) ==="
-      - docker build -f Dockerfile -t $REPO_URI:$IMAGE_TAG-slim .
+      - docker build -f Dockerfile -t $REPO_URI:$IMAGE_TAG-slim . || (echo "Slim build failed; Lambda image is already pushed" && exit 0)
 
   post_build:
     commands:
-      - echo "=== Pushing $REPO_URI:$IMAGE_TAG ==="
-      - docker push $REPO_URI:$IMAGE_TAG
-      - echo "=== Pushing $REPO_URI:$IMAGE_TAG-slim ==="
-      - docker push $REPO_URI:$IMAGE_TAG-slim
+      - if docker image inspect $REPO_URI:$IMAGE_TAG-slim >/dev/null 2>&1; then echo "=== Pushing $REPO_URI:$IMAGE_TAG-slim ==="; docker push $REPO_URI:$IMAGE_TAG-slim; else echo "Slim image not built; skipping push"; fi
       - echo "Build complete on $(date)"
       - echo "Lambda image  -> $REPO_URI:$IMAGE_TAG"
-      - echo "Slim image    -> $REPO_URI:$IMAGE_TAG-slim"
+      - echo "Slim image    -> $REPO_URI:$IMAGE_TAG-slim (if built)"
