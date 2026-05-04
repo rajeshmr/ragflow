@@ -1,5 +1,5 @@
 # Stage 1: Builder stage - for compiling and installing dependencies
-FROM public.ecr.aws/lambda/python:3.10 AS builder
+FROM public.ecr.aws/lambda/python:3.12 AS builder
 
 USER root
 WORKDIR /var/task
@@ -55,7 +55,7 @@ RUN echo "Skipping mini-racer installation (requires lengthy V8 compilation)"
 RUN python3 -m pip install xgboost
 
 # Stage 2: Final slim image - contains only runtime dependencies
-FROM public.ecr.aws/lambda/python:3.10
+FROM public.ecr.aws/lambda/python:3.12
 
 USER root
 WORKDIR /var/task
@@ -67,7 +67,7 @@ RUN yum update -y && \
     rm -rf /var/cache/yum
 
 # Copy Python packages from builder stage
-COPY --from=builder /var/lang/lib/python3.10/site-packages/ /var/lang/lib/python3.10/site-packages/
+COPY --from=builder /var/lang/lib/python3.12/site-packages/ /var/lang/lib/python3.12/site-packages/
 COPY --from=builder /var/runtime/ /var/runtime/
 
 # Copy NLTK data from builder stage
@@ -86,6 +86,9 @@ COPY graphrag graphrag
 COPY agentic_reasoning agentic_reasoning
 COPY mcp mcp
 COPY plugin plugin
+# v0.25.1+: shared modules (settings, doc_store, decorator, etc.) and the memory feature
+COPY common common
+COPY memory memory
 
 # Copy config files and scripts
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template
