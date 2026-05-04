@@ -82,11 +82,10 @@ COPY conf conf
 COPY deepdoc deepdoc
 COPY rag rag
 COPY agent agent
-COPY graphrag graphrag
-COPY agentic_reasoning agentic_reasoning
 COPY mcp mcp
-COPY plugin plugin
-# v0.25.1+: shared modules (settings, doc_store, decorator, etc.) and the memory feature
+# v0.25.1+: shared modules (settings, doc_store, decorator, etc.) and the memory feature.
+# Note: top-level graphrag/, plugin/, and agentic_reasoning/ were removed in v0.25.1
+# (graphrag moved into rag/graphrag/, plugin/ deleted, agentic_reasoning/ deleted).
 COPY common common
 COPY memory memory
 
